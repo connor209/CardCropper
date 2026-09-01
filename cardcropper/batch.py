@@ -10,6 +10,7 @@ filename order.
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass, field
 
 from . import imaging
@@ -26,6 +27,22 @@ ORDERS = {
     "crops-last": ("front", "back", "front-crops", "back-crops"),
     "interleaved": ("front", "front-crops", "back", "back-crops"),
 }
+
+#: Cloud-synced folders — Google Drive for Desktop, OneDrive, a network share
+#: — stream files on demand, and both halves of that go wrong transiently.
+#:
+#: A scan that has not been materialised locally yet can fail to open, and a
+#: write can be rejected mid-run; on Windows both surface as OSError [Errno 22]
+#: Invalid argument, which reads like a bug in the filename and is not. A
+#: second attempt a moment later almost always succeeds.
+#:
+#: A card that still fails after these attempts has whatever it managed to
+#: write removed again, because a card half-written is worse than a card not
+#: written: a bulk uploader would attach a front and its crops to a listing
+#: with no back at all, and nothing about the folder would show it. A failure
+#: is loud; a partial success is not.
+RETRIES = 3
+RETRY_WAIT = 0.7
 
 #: How the four files per card are named.
 #:
@@ -57,6 +74,26 @@ def list_images(folder):
                    if os.path.isfile(p)
                    and p.lower().endswith(imaging.IMAGE_EXTS)),
                   key=natural_key)
+
+
+def _io(fn, *args):
+    """
+    Run one filesystem operation, retrying the transient failures a
+    cloud-synced folder produces. See RETRIES.
+
+    The failing path is named in the final error. "[Errno 22] Invalid
+    argument" on its own sends you looking for a bad filename, which is never
+    what it is here.
+    """
+    for attempt in range(1, RETRIES + 1):
+        try:
+            return fn(*args)
+        except OSError as exc:
+            if attempt == RETRIES:
+                where = next((a for a in args if isinstance(a, str)), "")
+                name = os.path.basename(where)
+                raise OSError(f"{name}: {exc}" if name else str(exc)) from exc
+            time.sleep(RETRY_WAIT * attempt)
 
 
 @dataclass
@@ -133,7 +170,7 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
     faces = {}
 
     for face, path in (("front", card.front), ("back", card.back)):
-        source = imaging.load(path)
+        source = _io(imaging.load, path)
         exact, padded, angle = imaging.straighten(source)
         ok, why = imaging.detection_ok(exact, source)
         if not ok:
@@ -147,12 +184,17 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
         exact, padded = faces[face]
         if copy_originals:
             dest = os.path.join(out_dir, by_role[face])
-            if os.path.splitext(card.front if face == "front" else card.back)[1].lower() \
-                    == os.path.splitext(dest)[1].lower():
-                shutil.copy2(card.front if face == "front" else card.back, dest)
+            source_path = card.front if face == "front" else card.back
+            if os.path.splitext(source_path)[1].lower() == os.path.splitext(dest)[1].lower():
+                # copyfile, not copy2. copy2 also copies metadata, which means
+                # os.utime on the destination — and a Google Drive or OneDrive
+                # folder rejects that with [Errno 22] Invalid argument while
+                # having written the bytes perfectly well. The timestamps are
+                # worth nothing here and the failure costs a card.
+                _io(shutil.copyfile, source_path, dest)
             else:
-                source_path = card.front if face == "front" else card.back
-                imaging.load(source_path).save(dest, quality=quality, subsampling=0)
+                _io(lambda: imaging.load(source_path)
+                    .save(dest, quality=quality, subsampling=0))
         draw(padded, os.path.join(out_dir, by_role[f"{face}-crops"]), face.upper())
 
     return [n for _, n in names], notes
@@ -171,6 +213,7 @@ def run(plan, out_dir, naming="grouped", order="crops-last", style="grading",
     os.makedirs(out_dir, exist_ok=True)
     total = len(plan.cards)
     done = failed = 0
+    failures = []
     for i, card in enumerate(plan.cards, 1):
         if should_stop is not None and should_stop():
             break
@@ -182,6 +225,13 @@ def run(plan, out_dir, naming="grouped", order="crops-last", style="grading",
                 progress(i, total, card, names, notes, None)
         except Exception as exc:                        # noqa: BLE001
             failed += 1
+            failures.append((i, card, exc))
+            # Leave nothing half-written behind — see RETRIES.
+            for _, name in output_names(i, card, naming, order):
+                try:
+                    os.remove(os.path.join(out_dir, name))
+                except OSError:
+                    pass
             if progress:
                 progress(i, total, card, [], [], exc)
-    return done, failed
+    return done, failed, failures

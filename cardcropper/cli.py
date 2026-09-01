@@ -62,11 +62,17 @@ def main():
         print(f"[{i}/{total}] {names[0]} … {names[-1]}"
               + ("   " + "; ".join(notes) if notes else ""))
 
-    done, failed = batch.run(plan, args.out, naming=args.naming, order=args.order,
-                             style=args.style,
-                             copy_originals=not args.no_originals, progress=report)
+    done, failed, failures = batch.run(
+        plan, args.out, naming=args.naming, order=args.order, style=args.style,
+        copy_originals=not args.no_originals, progress=report)
     print(f"\n{done} card(s) written to {args.out}"
           + (f", {failed} failed" if failed else ""))
+    # The failures again at the end. In a batch of a hundred the one that
+    # failed has long scrolled away, and it is the only line that needs acting
+    # on — those two scans are the ones to feed back in.
+    for i, card, exc in failures:
+        print(f"  card {i}: {os.path.basename(card.front)} + "
+              f"{os.path.basename(card.back)} — {exc}", file=sys.stderr)
     return 1 if failed else 0
 
 

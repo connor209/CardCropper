@@ -321,12 +321,12 @@ class App(ttk.Frame):
 
         def work():
             try:
-                done, failed = batch.run(
+                done, failed, failures = batch.run(
                     plan, out, naming=naming, order=order, style=style,
                     copy_originals=self.copy_var.get(),
                     progress=lambda *a: self.events.put(("card",) + a),
                     should_stop=self.stop_flag.is_set)
-                self.events.put(("finished", done, failed))
+                self.events.put(("finished", done, failed, failures))
             except Exception:                               # noqa: BLE001
                 self.events.put(("crashed", traceback.format_exc()))
 
@@ -351,12 +351,21 @@ class App(ttk.Frame):
                         for n in notes:
                             self._say(f"[{i}/{total}] {n}")
                 elif event[0] == "finished":
-                    _, done, failed = event
+                    _, done, failed, failures = event
                     self.run_btn.configure(text="Crop cards")
                     self.open_btn.configure(state="normal")
                     self._say(f"Done: {done} card(s) written"
                               + (f", {failed} failed" if failed else "")
                               + (" (stopped early)" if self.stop_flag.is_set() else ""))
+                    # The failures again at the end. After a hundred cards the
+                    # one that failed has scrolled away, and it is the only
+                    # line left that needs acting on.
+                    if failures:
+                        self._say("Cards to run again:")
+                        for i, card, exc in failures:
+                            self._say(f"  card {i}: "
+                                      f"{os.path.basename(card.front)} + "
+                                      f"{os.path.basename(card.back)} — {exc}")
                 elif event[0] == "crashed":
                     self.run_btn.configure(text="Crop cards")
                     self._say(event[1])

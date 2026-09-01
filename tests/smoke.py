@@ -62,8 +62,9 @@ def main():
 
         for style in sorted(imaging.STYLES):
             target = os.path.join(out, style)
-            done, failed = batch.run(plan, target, style=style)
-            check(done == 2 and failed == 0, f"{style}: {done} done, {failed} failed")
+            done, failed, failures = batch.run(plan, target, style=style)
+            check(done == 2 and failed == 0 and not failures,
+                  f"{style}: {done} done, {failed} failed")
             written = sorted(os.listdir(target))
             check(len(written) == 8, f"{style}: expected 8 files, got {written}")
             for name in written:
@@ -92,6 +93,45 @@ def main():
         for order in batch.ORDERS:
             first = batch.output_names(1, None, "grouped", order)[0][0]
             check(first == "front", f"{order} does not lead with the front")
+
+        # A transient OSError is retried, not surfaced. This is the Google
+        # Drive case: [Errno 22] on a scan that has not been streamed down yet.
+        calls = []
+
+        def flaky(path):
+            calls.append(path)
+            if len(calls) < batch.RETRIES:
+                raise OSError(22, "Invalid argument")
+            return "recovered"
+
+        batch.RETRY_WAIT = 0                    # do not actually sleep here
+        check(batch._io(flaky, "G:/x/scan.jpg") == "recovered",
+              "a transient OSError should be retried")
+        check(len(calls) == batch.RETRIES, f"expected {batch.RETRIES} attempts")
+
+        # One that never recovers names the file, so "[Errno 22] Invalid
+        # argument" does not send someone hunting for a bad filename.
+        try:
+            batch._io(lambda _p: (_ for _ in ()).throw(OSError(22, "Invalid argument")),
+                      "G:/x/scan.jpg")
+            check(False, "a permanent OSError should raise")
+        except OSError as exc:
+            check("scan.jpg" in str(exc), f"error does not name the file: {exc}")
+
+        # A card that fails leaves NOTHING behind — a front with no back would
+        # reach a listing looking complete.
+        broken = os.path.join(work, "broken")
+        os.makedirs(broken)
+        shutil.copy(os.path.join(scans, "0001.jpg"), os.path.join(broken, "0001.jpg"))
+        with open(os.path.join(broken, "0002.jpg"), "w") as fh:
+            fh.write("not an image")
+        partial = os.path.join(work, "partial")
+        done, failed, failures = batch.run(
+            batch.pair_sequential(batch.list_images(broken)), partial)
+        check(done == 0 and failed == 1, f"expected 1 failure, got {done}/{failed}")
+        check(len(failures) == 1, "the failure should be reported for re-running")
+        check(not os.listdir(partial),
+              f"a failed card left files behind: {os.listdir(partial)}")
 
         import cardcropper.gui                   # noqa: F401  (tkinter present?)
     finally:
