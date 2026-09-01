@@ -1,0 +1,46 @@
+name: Build Windows executable
+
+# The .exe cannot be cross-compiled from Linux — PyInstaller bundles a
+# platform bootloader and the host CPython — so it is built on a Windows
+# runner and attached to the run as an artifact.
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Sanity-check the pipeline before freezing it
+        run: python -m tests.smoke
+
+      - name: Build
+        run: pyinstaller packaging/CardCropper.spec --noconfirm
+
+      - name: Check the exe starts
+        run: |
+          if (-not (Test-Path dist/CardCropper.exe)) { throw "no exe produced" }
+          (Get-Item dist/CardCropper.exe).Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CardCropper-windows
+          path: dist/CardCropper.exe
+          if-no-files-found: error
