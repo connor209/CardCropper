@@ -1,0 +1,4 @@
+# A .bat with LF line endings fails on Windows in ways that look like a broken
+# script rather than a line-ending problem, so this one is checked out CRLF
+# whatever the platform.
+*.bat text eol=crlf

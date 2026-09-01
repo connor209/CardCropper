@@ -26,9 +26,42 @@ straightens, crops and files. The judgement stays with you.
    border turns JPEG noise into speckle indistinguishable from whitening —
    damage the card does not have.
 
+## Getting it running
+
+There are two downloads, and which one you need depends on whether your machine
+has **Smart App Control** switched on.
+
+**`CardCropper-python.zip` — works everywhere, needs Python installed.** Unzip
+it and double-click `CardCropper.bat`. The first run installs Pillow and numpy
+and takes a minute; after that it just opens the window. If Python is missing
+the launcher says so and points at the installer — get it from
+[python.org](https://www.python.org/downloads/windows/), tick **Add python.exe
+to PATH**, and leave **tcl/tk and IDLE** enabled.
+
+**`CardCropper.exe` — nothing to install, but unsigned.** Windows treats it in
+one of two ways:
+
+- *SmartScreen* shows a blue "Windows protected your PC" box. Click **More
+  info** → **Run anyway**. Normal for any unsigned app.
+- *Smart App Control* shows "Smart App Control blocked this app" with **no way
+  past it**. Microsoft's documentation is explicit that there is no per-app
+  bypass — the only ways through are turning Smart App Control off entirely, or
+  signing the executable with a certificate that has built up reputation.
+
+Smart App Control governs *executables*, not scripts, which is why the `.bat`
+launcher works on a machine where the `.exe` cannot: it runs the same code
+through Python's own `pythonw.exe`, signed by the Python Software Foundation
+and trusted already. Nothing has to be turned off.
+
+If you would rather turn Smart App Control off, it is in Windows Security →
+App & browser control → Smart App Control settings. Microsoft's current
+documentation says it can be turned back on afterwards; it used to require
+resetting Windows, so check that page says so on your machine before relying
+on it.
+
 ## Using it
 
-Double-click `CardCropper.exe`.
+Double-click `CardCropper.bat` (or `CardCropper.exe`).
 
 1. **Add scans…** or **Add folder…**. Files pair in filename order: the first
    is a front, the second is its back, and so on. `2.jpg` sorts before

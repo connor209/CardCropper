@@ -44,3 +44,21 @@ jobs:
           name: CardCropper-windows
           path: dist/CardCropper.exe
           if-no-files-found: error
+
+      # Windows 11's Smart App Control refuses unsigned executables and offers
+      # no per-app override, so the .exe above is unusable on a machine that
+      # has it on. This bundle runs the same app through Python's own signed
+      # interpreter, which SAC already trusts.
+      - name: Package the launcher bundle
+        run: |
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item -Recurse -Path cardcropper -Destination staging/cardcropper
+          Remove-Item -Recurse -Force staging/cardcropper/__pycache__ -ErrorAction Ignore
+          Copy-Item -Path CardCropper.bat, requirements.txt, README.md -Destination staging/
+          Compress-Archive -Path staging/* -DestinationPath CardCropper-python.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CardCropper-python
+          path: CardCropper-python.zip
+          if-no-files-found: error
