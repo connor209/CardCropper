@@ -24,9 +24,12 @@ from . import batch, imaging
 
 APP_NAME = "CardCropper"
 
+#: First entry is the default. The labelled sheet is what the card-conditioning
+#: skill produces and what these crops are actually read as — captions on every
+#: tile, so a flaw can be named by where it is rather than pointed at.
 STYLE_LABELS = {
-    "Clean listing photo (no labels)": "listing",
-    "Grading sheet (labelled)": "grading",
+    "Labelled sheet — corners & edges": "grading",
+    "Clean photo, no labels": "listing",
 }
 NAMING_LABELS = {
     "Grouped — 0001_1_front.jpg": "grouped",

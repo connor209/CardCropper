@@ -20,9 +20,9 @@ def main():
     ap.add_argument("inputs", nargs="+",
                     help="scan files, or folders of scans, in front/back order")
     ap.add_argument("--out", required=True, help="output folder")
-    ap.add_argument("--style", choices=sorted(imaging.STYLES), default="listing",
-                    help="listing = clean photo, grading = labelled sheet "
-                         "(default: listing)")
+    ap.add_argument("--style", choices=sorted(imaging.STYLES), default="grading",
+                    help="grading = the labelled corner & edge sheet, listing = "
+                         "the same crops with no captions (default: grading)")
     ap.add_argument("--naming", choices=batch.NAMING, default="grouped",
                     help="grouped = 0001_1_front.jpg, sequence = one continuous "
                          "run of numbers (default: grouped)")

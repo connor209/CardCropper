@@ -1,40 +1,49 @@
-# PyInstaller build for CardCropper.
+# PyInstaller build for CardCropper.  Requires PyInstaller 6.x.
 #
-# One file, no console. `--windowed` matters more than it looks: without it
-# Windows opens a command prompt behind the app, and the first thing a person
-# does with an unexpected black window is close it, which takes the app with it.
-#
-# Run from the repository root:
+# Run from anywhere:
 #     pyinstaller packaging/CardCropper.spec --noconfirm
+#
+# Two things this file has to get right, both of which cost a red build:
+#
+# **Script paths in a spec resolve against the SPEC's directory, not the
+# working directory.** A bare "entry.py" here means packaging/entry.py, which
+# does not exist. SPECPATH is injected by PyInstaller and is the only reliable
+# way to name the repository root.
+#
+# **PyInstaller 6 removed the arguments 5.x specs carry.** Bytecode encryption
+# went, taking `cipher` and `block_cipher` with it, along with `a.zipfiles`,
+# `win_no_prefer_redirects` and `win_private_assemblies`. A spec copied from an
+# older template raises a TypeError before it builds anything.
 
 import os
 
-block_cipher = None
+ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))  # noqa: F821  (injected)
 
 a = Analysis(
-    ["entry.py"],
-    pathex=[os.path.abspath(".")],
+    [os.path.join(ROOT, "entry.py")],
+    pathex=[ROOT],
     binaries=[],
     datas=[],
+    # Pillow finds Tk through this shim, and PyInstaller cannot see the import
+    # because it happens inside a try/except at runtime.
     hiddenimports=["PIL._tkinter_finder"],
     hookspath=[],
+    hooksconfig={},
     runtime_hooks=[],
-    # numpy pulls in its test suite and every plotting backend it can find;
-    # none of it is reachable from here and it doubles the binary.
-    excludes=["matplotlib", "scipy", "pandas", "pytest", "numpy.testing",
-              "PIL.ImageQt", "PyQt5", "PySide2", "IPython"],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
+    # None of this is reachable from here, and together it roughly doubles the
+    # binary. numpy.testing is deliberately NOT excluded: numpy reaches it
+    # through a lazy __getattr__, and excluding it breaks the import.
+    excludes=["matplotlib", "scipy", "pandas", "pytest", "PIL.ImageQt",
+              "PyQt5", "PyQt6", "PySide2", "PySide6", "IPython", "tornado"],
     noarchive=False,
 )
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
-    a.zipfiles,
     a.datas,
     [],
     name="CardCropper",
@@ -43,6 +52,9 @@ exe = EXE(
     strip=False,
     upx=False,
     runtime_tmpdir=None,
+    # No console. Without this Windows opens a command prompt behind the app,
+    # and the first thing a person does with an unexpected black window is
+    # close it — which takes the app with it.
     console=False,
     disable_windowed_traceback=False,
     target_arch=None,
