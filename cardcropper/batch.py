@@ -53,6 +53,16 @@ RETRY_WAIT = 0.7
 #: is legibility against a clean run of numbers.
 NAMING = ("grouped", "sequence")
 
+#: Images per card, which is what makes a `sequence`-numbered folder readable
+#: backwards: file 0009 is card 3 because every card before it took four.
+PER_CARD = len(ORDERS["crops-last"])
+
+#: The two shapes `output_names` writes, read back. Both are anchored so that a
+#: file the app did not write — a scan the operator dropped in, an export from
+#: something else — cannot be mistaken for a card number.
+GROUPED_NAME = re.compile(r"^(\d+)_\d+_[a-z-]+$")
+SEQUENCE_NAME = re.compile(r"^(\d+)$")
+
 #: How a folder of scans is read: one card per PAIR of files, or one card per
 #: file with both faces on it.
 #:
@@ -282,6 +292,44 @@ def _scans_of(card, notes):
     return {"front": regions[card.front.side], "back": regions[card.back.side]}
 
 
+def next_index(out_dir):
+    """
+    The card number a batch written into `out_dir` should start at.
+
+    A second batch cropped into the folder that already holds the first would
+    otherwise be written over the top of it: the numbering restarts at 1 every
+    run, and every name it produces is one the previous run already used. The
+    scans survive that — they are only ever copied — but the crops do not, and
+    nothing about the folder afterwards shows that a batch went missing.
+
+    Read back from the filenames rather than from a note left in the folder,
+    because the folder is the thing the operator edits. Cards get deleted,
+    re-cropped, dragged in from another run, and a counter in a dotfile would
+    be wrong the moment any of that happened while the filenames never are.
+
+    Both naming schemes are read on every call, not just the one selected now:
+    a folder filled with `grouped` names and then added to with `sequence`
+    selected still must not land on a name that is already there.
+    """
+    if not os.path.isdir(out_dir):
+        return 1
+    highest = 0
+    for name in os.listdir(out_dir):
+        stem, ext = os.path.splitext(name)
+        if ext.lower() not in imaging.IMAGE_EXTS:
+            continue
+        grouped = GROUPED_NAME.match(stem)
+        if grouped:
+            highest = max(highest, int(grouped.group(1)))
+            continue
+        run_of = SEQUENCE_NAME.match(stem)
+        if run_of:
+            # Round UP: a folder ending at 0009 holds a card whose remaining
+            # three files are still to come, and card 3 is taken either way.
+            highest = max(highest, -(-int(run_of.group(1)) // PER_CARD))
+    return highest + 1
+
+
 def process_card(card, out_dir, index, naming="grouped", order="crops-last",
                  style="grading", copy_originals=True, quality=95):
     """
@@ -346,33 +394,47 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
 
 
 def run(plan, out_dir, naming="grouped", order="crops-last", style="grading",
-        copy_originals=True, progress=None, should_stop=None):
+        copy_originals=True, progress=None, should_stop=None, start=None):
     """
     Process every card in `plan`, reporting as it goes.
 
+    `start` is the number the first card is written as. None asks
+    `next_index`, so a second batch cropped into the same folder carries on
+    from the first instead of writing over it; pass 1 to number from the top
+    and overwrite whatever is there.
+
     `progress(index, total, card, filenames, notes, error)` is called once per
-    card. A card that fails does not stop the batch: a hundred-card run that
-    aborts on card 3 has wasted the operator's time in a way that reporting
-    card 3 and carrying on does not.
+    card, and `index` is the card's position in THIS batch — 1, 2, 3 — not the
+    number it was written as. The two come apart the moment a batch starts at
+    13, and the caller is using it to address its own rows.
+
+    A card that fails does not stop the batch: a hundred-card run that aborts
+    on card 3 has wasted the operator's time in a way that reporting card 3 and
+    carrying on does not.
     """
     os.makedirs(out_dir, exist_ok=True)
+    if start is None:
+        start = next_index(out_dir)
     total = len(plan.cards)
     done = failed = 0
     failures = []
     for i, card in enumerate(plan.cards, 1):
         if should_stop is not None and should_stop():
             break
+        number = start + i - 1
         try:
-            names, notes = process_card(card, out_dir, i, naming, order, style,
-                                        copy_originals)
+            names, notes = process_card(card, out_dir, number, naming, order,
+                                        style, copy_originals)
             done += 1
             if progress:
                 progress(i, total, card, names, notes, None)
         except Exception as exc:                        # noqa: BLE001
             failed += 1
             failures.append((i, card, exc))
-            # Leave nothing half-written behind — see RETRIES.
-            for _, name in output_names(i, card, naming, order):
+            # Leave nothing half-written behind — see RETRIES. Cleared under
+            # the number it was WRITTEN as, or the cleanup tidies away some
+            # other card's files.
+            for _, name in output_names(number, card, naming, order):
                 try:
                     os.remove(os.path.join(out_dir, name))
                 except OSError:

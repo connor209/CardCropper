@@ -124,10 +124,29 @@ are still copied byte for byte.
 | **Naming** | `Grouped` writes `0001_1_front.jpg`, `0001_2_back.jpg`, … — readable, and a wrong pair is obvious. `Continuous` renumbers the batch as one run, `0001.jpg` through `0008.jpg` for two cards. Both sort into the same sequence. |
 | **Order** | Where the crops sit. Either way the **front leads** — the first image is the eBay gallery thumbnail, and that has to be the card, not a magnified corner. |
 | **Front & back photos** | On by default, so the output folder is the complete set of four images per card — the original scan where a card was scanned on its own, that face cut out of the scan where it was not. Off writes only the two crop sheets. |
+| **Carry on from the cards already there** | On by default. A second batch cropped into a folder that already holds ten cards is numbered from `0011`, so a session split over several sittings still comes out as one continuous run. Off numbers from `0001` again and overwrites. |
 
 The original scans are copied, never moved. If a pairing turns out to be off by
 one, the fix is to pair again — only possible while the scans are still where
 the scanner left them.
+
+### Cropping a folder in more than one sitting
+
+The numbering carries on by itself. Crop twelve cards into `cropped`, come back
+with another eight, point the app at the same folder, and they are written as
+`0013` to `0020` — the line under the options says so before you press Crop,
+and the table shows each row's real filenames.
+
+The next number is read back from the filenames rather than from a counter kept
+somewhere, because the folder is the thing you edit: cards get deleted,
+re-cropped, or dragged in from another run, and a stored counter would be wrong
+the moment any of that happened. Both naming schemes are read every time, so a
+folder filled one way and added to the other still cannot collide. Files the
+app did not write — a stray export, `IMG_4021.jpg` — are not counted as cards.
+
+To go back to `0001` and overwrite, untick **Carry on from the cards already in
+the output folder** (`--restart` on the command line). That is the one case
+that still asks before it overwrites.
 
 ## From the command line
 
@@ -141,6 +160,8 @@ CardCropper.exe --cli "C:\scans" --out "C:\out" --split combined --front second
 
 `--split` is `auto` (the default), `single` or `combined`, and `--front` is
 `first` or `second` — the same three settings as the window's **Scans** row.
+Repeated runs into one `--out` folder carry on numbering where the last left
+off; `--restart` numbers from `0001` and overwrites instead.
 
 Or from a checkout: `python -m cardcropper --cli scans --out out`.
 
@@ -189,4 +210,6 @@ divided and one holding a single card is not, that the two halves add back up
 to the whole scan so nothing of either card was cut away, that the two faces
 written out are actually different rather than one half twice, that an odd scan
 is reported rather than absorbed, that the output filenames sort into the order
-they were meant to, and that the front leads.
+they were meant to, and that the front leads. It also runs two batches into one
+folder and checks they come out as a single continuous run rather than the
+second writing over the first.

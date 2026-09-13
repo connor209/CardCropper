@@ -40,6 +40,10 @@ def main():
     ap.add_argument("--front", choices=("first", "second"), default="first",
                     help="which half of a combined scan is the front: first is "
                          "the left or top one (default: first)")
+    ap.add_argument("--restart", action="store_true",
+                    help="number this batch from 0001, overwriting any cards "
+                         "already in the output folder. The default carries on "
+                         "from the highest card number already there")
     args = ap.parse_args()
 
     paths = []
@@ -83,6 +87,11 @@ def main():
         sys.exit("--out is one of the folders the scans came from; the crops would "
                  "be paired in as scans next run. Choose a separate folder.")
 
+    start = 1 if args.restart else batch.next_index(args.out)
+    if start > 1:
+        print(f"{args.out} already holds {start - 1} card(s) — this batch is "
+              f"numbered from {start:04d}")
+
     def report(i, total, card, names, notes, err):
         if err:
             print(f"[{i}/{total}] FAILED {card.front.name}: {err}")
@@ -92,7 +101,7 @@ def main():
 
     done, failed, failures = batch.run(
         plan, args.out, naming=args.naming, order=args.order, style=args.style,
-        copy_originals=not args.no_originals, progress=report)
+        copy_originals=not args.no_originals, progress=report, start=start)
     print(f"\n{done} card(s) written to {args.out}"
           + (f", {failed} failed" if failed else ""))
     # The failures again at the end. In a batch of a hundred the one that

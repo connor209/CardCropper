@@ -291,6 +291,78 @@ def main():
         check(any("two cards" in n for n in notes),
               f"no warning that the scan holds two cards: {notes}")
 
+        # ------------------------------------------- carrying on a folder
+        #
+        # The failure here is quiet and destructive: a second batch cropped
+        # into the folder holding the first is numbered from 0001 again, so
+        # every name it writes is one the first batch already used.
+        carry = os.path.join(work, "carry")
+        check(batch.next_index(carry) == 1, "a folder that does not exist starts at 1")
+        os.makedirs(carry)
+        check(batch.next_index(carry) == 1, "an empty folder starts at 1")
+
+        first = batch.pair_sequential(batch.list_images(scans))
+        done, failed, _ = batch.run(first, carry)
+        check(done == 2 and not failed, f"first batch: {done} done, {failed} failed")
+        check(batch.next_index(carry) == 3,
+              f"2 cards written, so the next is 3, not {batch.next_index(carry)}")
+
+        # The second batch lands after the first instead of on top of it.
+        done, failed, _ = batch.run(first, carry)
+        check(done == 2 and not failed, f"second batch: {done} done, {failed} failed")
+        written = sorted(os.listdir(carry))
+        check(len(written) == 16, f"expected 16 files after two batches, got {written}")
+        check(written == [n for i in (1, 2, 3, 4) for _, n in
+                          batch.output_names(i, None)],
+              f"the two batches do not form one continuous run: {written}")
+
+        # start=1 is the explicit overwrite, and must leave the folder no
+        # bigger than the batch that overwrote it began with.
+        done, failed, _ = batch.run(first, carry, start=1)
+        check(done == 2 and not failed, f"restart: {done} done, {failed} failed")
+        check(len(os.listdir(carry)) == 16,
+              "start=1 should have overwritten cards 1-2, not added more")
+
+        # Continuous numbering is read back the same way, four files to a card.
+        seq = os.path.join(work, "carry-seq")
+        batch.run(first, seq, naming="sequence")
+        check(sorted(os.listdir(seq))[-1] == "0008.jpg", "sequence batch not 1-8")
+        check(batch.next_index(seq) == 3,
+              f"0008.jpg is the end of card 2, so next is 3, not {batch.next_index(seq)}")
+        batch.run(first, seq, naming="sequence")
+        check(sorted(os.listdir(seq)) == [f"{i:04d}.jpg" for i in range(1, 17)],
+              f"sequence batches do not run on: {sorted(os.listdir(seq))}")
+
+        # A part-written card still reserves its number — rounding DOWN here
+        # would hand the next batch a number that is already half used.
+        part = os.path.join(work, "carry-part")
+        os.makedirs(part)
+        open(os.path.join(part, "0009.jpg"), "w").close()
+        check(batch.next_index(part) == 4,
+              f"0009.jpg is the first file of card 3, so card 3 is taken and the "
+              f"next is 4 — got {batch.next_index(part)}")
+
+        # Files the app did not write must not be read as card numbers, or a
+        # stray export renumbers the batch.
+        junk = os.path.join(work, "carry-junk")
+        os.makedirs(junk)
+        for name in ("notes.txt", "scan_front.jpg", "IMG_4021.jpg", "0007_1.jpg"):
+            open(os.path.join(junk, name), "w").close()
+        check(batch.next_index(junk) == 1,
+              f"junk filenames were read as card numbers: {batch.next_index(junk)}")
+
+        # A failed card is cleaned up under the number it was WRITTEN as, not
+        # its position, or the cleanup deletes a different card's files.
+        after = os.path.join(work, "carry-fail")
+        os.makedirs(after)
+        batch.run(first, after)                         # cards 1-2 land here
+        before = sorted(os.listdir(after))
+        done, failed, _ = batch.run(
+            batch.pair_sequential(batch.list_images(broken)), after)
+        check(done == 0 and failed == 1, f"expected 1 failure, got {done}/{failed}")
+        check(sorted(os.listdir(after)) == before,
+              "a failed card took an earlier card's files with it")
+
         import cardcropper.gui                   # noqa: F401  (tkinter present?)
     finally:
         shutil.rmtree(work, ignore_errors=True)

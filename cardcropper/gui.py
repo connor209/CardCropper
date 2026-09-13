@@ -93,6 +93,9 @@ class App(ttk.Frame):
         #: Whether each file holds both faces, once looked at. Cached so that
         #: flipping between the settings does not re-read the folder.
         self.probed = {}
+        #: The last output folder the table was drawn for, so that typing a
+        #: path does not re-read the folder on every keystroke.
+        self._last_out = None
         self.events = queue.Queue()
         self.worker = None
         self.planner = None
@@ -210,8 +213,24 @@ class App(ttk.Frame):
                         variable=self.copy_var, command=self._refresh)\
             .grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
+        # On by default, and the safer way round: numbering from the top again
+        # writes over a previous batch card for card, and nothing in the folder
+        # afterwards shows that one went missing. Carrying on costs nothing if
+        # the folder turns out to be empty.
+        self.continue_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(box, text="Carry on from the cards already in the output "
+                                  "folder, instead of numbering from 0001 again",
+                        variable=self.continue_var, command=self._refresh)\
+            .grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
         self.preview = ttk.Label(box, foreground="#666")
-        self.preview.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.preview.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        # The numbers in the table depend on what is in the output folder, so
+        # the table has to be redrawn when that changes. Reading the folder on
+        # every keystroke would be a listdir per character over a cloud drive,
+        # so a path is only read once it names a folder that exists.
+        self.out_var.trace_add("write", lambda *_a: self._out_changed())
 
     def _build_run(self):
         bar = ttk.Frame(self)
@@ -251,14 +270,32 @@ class App(ttk.Frame):
                 NAMING_LABELS[self.naming_var.get()],
                 ORDER_LABELS[self.order_var.get()])
 
+    def _start_index(self):
+        """The number this batch's first card would be written as, right now."""
+        if not self.continue_var.get():
+            return 1
+        return batch.next_index(self.out_var.get().strip())
+
+    def _out_changed(self):
+        """Redraw when the output folder becomes one that exists — see above."""
+        out = self.out_var.get().strip()
+        if out == self._last_out:
+            return
+        if out and not os.path.isdir(out):
+            return
+        self._last_out = out
+        self._refresh()
+
     def _refresh(self):
         self.tree.delete(*self.tree.get_children())
         style, naming, order = self._opts()
+        start = self._start_index()
         for i, card in enumerate(self.cards, 1):
-            names = [n for _, n in batch.output_names(i, card, naming, order)]
-            if not self.copy_var.get():
-                names = [n for (role, n) in batch.output_names(i, card, naming, order)
-                         if role.endswith("crops")]
+            # The row is numbered by its position, the FILES by where the batch
+            # lands in the folder. Everything that addresses a row later —
+            # progress, a failure, the done tint — uses the position.
+            names = [n for role, n in batch.output_names(start + i - 1, card, naming, order)
+                     if self.copy_var.get() or role.endswith("crops")]
             self.tree.insert("", "end", iid=str(i), values=(
                 i, card.front.name, card.back.name, ", ".join(names)),
                 tags=("combined",) if card.combined else ())
@@ -284,8 +321,11 @@ class App(ttk.Frame):
                         "the back. Check the pairs below before cropping.")
             self.hint.configure(foreground="#666", text=text)
         if self.cards:
-            names = [n for _, n in batch.output_names(1, self.cards[0], naming, order)]
-            self.preview.configure(text="Card 1 will be written as:  " + "   ".join(names))
+            names = [n for _, n in batch.output_names(start, self.cards[0], naming, order)]
+            held = (f"Output folder already holds {start - 1} card(s).  "
+                    if start > 1 else "")
+            self.preview.configure(
+                text=held + "Card 1 will be written as:  " + "   ".join(names))
         else:
             self.preview.configure(text="")
 
@@ -466,10 +506,16 @@ class App(ttk.Frame):
                 "Crops written there would be picked up as scans next time and "
                 "paired into the batch. Choose a separate folder.")
             return
+        # Only a warning when the numbering would actually land on top of what
+        # is there. Carrying on cannot collide, so warning about it would be
+        # the dialog that teaches people to click through dialogs.
+        start = self._start_index()
         existing = os.path.isdir(out) and os.listdir(out)
-        if existing and not messagebox.askyesno(
-                APP_NAME, f"{out}\n\nis not empty. Files with the same names will be "
-                          "overwritten. Carry on?"):
+        if start == 1 and existing and not messagebox.askyesno(
+                APP_NAME, f"{out}\n\nis not empty, and this batch is numbered from "
+                          "0001. Cards already there will be overwritten.\n\nTick "
+                          "\"Carry on from the cards already in the output folder\" "
+                          "to add to them instead.\n\nOverwrite?"):
             return
 
         style, naming, order = self._opts()
@@ -479,13 +525,15 @@ class App(ttk.Frame):
         self.run_btn.configure(text="Stop")
         self.open_btn.configure(state="disabled")
         self.stop_flag.clear()
-        self._say(f"\nCropping {len(plan.cards)} card(s) into {out}")
+        self._say(f"\nCropping {len(plan.cards)} card(s) into {out}"
+                  + (f", numbered from {start:04d} — the folder already holds "
+                     f"{start - 1}" if start > 1 else ""))
 
         def work():
             try:
                 done, failed, failures = batch.run(
                     plan, out, naming=naming, order=order, style=style,
-                    copy_originals=self.copy_var.get(),
+                    copy_originals=self.copy_var.get(), start=start,
                     progress=lambda *a: self.events.put(("card",) + a),
                     should_stop=self.stop_flag.is_set)
                 self.events.put(("finished", done, failed, failures))
@@ -522,6 +570,18 @@ class App(ttk.Frame):
                     _, done, failed, failures = event
                     self._busy(False)
                     self.run_btn.configure(text="Crop cards")
+                    # The folder just grew, so the numbers the table showed
+                    # are now spent. The table itself is left alone — it is
+                    # the record of what this run wrote, tags and all — and
+                    # the line under the options says where the next batch
+                    # would land. Adding more scans redraws it properly.
+                    self._last_out = None
+                    held = batch.next_index(self.out_var.get().strip()) - 1
+                    if held:
+                        self.preview.configure(
+                            text=f"Output folder now holds {held} card(s). Add the "
+                                 f"next batch of scans and it will carry on from "
+                                 f"{held + 1:04d}.")
                     self.open_btn.configure(state="normal")
                     self._say(f"Done: {done} card(s) written"
                               + (f", {failed} failed" if failed else "")
