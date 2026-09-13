@@ -57,6 +57,15 @@ FRONT_LABELS = {
     "Front is the left / top one": True,
     "Front is the right / bottom one": False,
 }
+#: What the cards were laid on. Chosen rather than detected: a white backing
+#: sheet and a yellow-bordered card cropped flush to its edges are the same
+#: pixels — bright, flat, brighter than anything inside them — so there is
+#: nothing to detect. Getting it backwards inverts every judgement the app
+#: makes, which is too much to risk to save a click.
+BACKGROUND_LABELS = {
+    "Laid on a dark bed": "dark",
+    "Laid on a white backing": "light",
+}
 
 
 def _reveal(path):
@@ -151,8 +160,15 @@ class App(ttk.Frame):
         self.front_box = ttk.Combobox(row, textvariable=self.front_var,
                                       values=list(FRONT_LABELS), state="readonly",
                                       width=28)
-        self.front_box.pack(side="left")
+        self.front_box.pack(side="left", padx=(0, 14))
         self.front_box.bind("<<ComboboxSelected>>", lambda _e: self._replan())
+
+        self.bg_var = tk.StringVar(value=list(BACKGROUND_LABELS)[0])
+        self.bg_box = ttk.Combobox(row, textvariable=self.bg_var,
+                                   values=list(BACKGROUND_LABELS), state="readonly",
+                                   width=24)
+        self.bg_box.pack(side="left")
+        self.bg_box.bind("<<ComboboxSelected>>", lambda _e: self._replan())
 
         self.hint = ttk.Label(self, foreground="#666", text="")
         self.hint.grid(row=1, column=0, sticky="w", pady=(8, 4))
@@ -332,13 +348,21 @@ class App(ttk.Frame):
     # ------------------------------------------------------------ actions
 
     def _pairing(self):
-        return SPLIT_LABELS[self.split_var.get()], FRONT_LABELS[self.front_var.get()]
+        return (SPLIT_LABELS[self.split_var.get()], FRONT_LABELS[self.front_var.get()],
+                BACKGROUND_LABELS[self.bg_var.get()])
 
     def _probe(self, path):
-        """imaging.probe, remembered — see `self.probed`."""
-        if path not in self.probed:
-            self.probed[path] = imaging.probe(path)
-        return self.probed[path]
+        """
+        imaging.probe, remembered — see `self.probed`.
+
+        Keyed by the background setting as well as the path: which way round a
+        scan is read changes what is found on it, so the answer cached under
+        one setting is not the answer under another.
+        """
+        key = (path, BACKGROUND_LABELS[self.bg_var.get()])
+        if key not in self.probed:
+            self.probed[key] = imaging.probe(path, key[1])
+        return self.probed[key]
 
     def _adopt(self, paths):
         if not paths:
@@ -361,7 +385,7 @@ class App(ttk.Frame):
         if added is None and self.cards:
             self._say("Re-pairing every scan — any swaps, removals or reordering "
                       "are undone.")
-        split, front_first = self._pairing()
+        split, front_first, background = self._pairing()
         if split == "auto":
             self._say("Examining scans…")
             self._busy(True)
@@ -370,6 +394,7 @@ class App(ttk.Frame):
                 try:
                     plans = [batch.plan_scans(
                         b, split=split, front_first=front_first, probe=self._probe,
+                        background=background,
                         progress=lambda i, n, p: self.events.put(("examining", i, n)))
                         for b in self.batches]
                     self.events.put(("planned", plans, added))
@@ -379,7 +404,8 @@ class App(ttk.Frame):
             self.planner = threading.Thread(target=work, daemon=True)
             self.planner.start()
             return
-        self._planned([batch.plan_scans(b, split=split, front_first=front_first)
+        self._planned([batch.plan_scans(b, split=split, front_first=front_first,
+                                        background=background)
                        for b in self.batches], added)
 
     def _planned(self, plans, added=None):
@@ -421,7 +447,7 @@ class App(ttk.Frame):
         progress and per-row results that come back are addressed BY ROW: a
         table that renumbered underneath them marks the wrong card done.
         """
-        for w in (self.split_box, self.front_box):
+        for w in (self.split_box, self.front_box, self.bg_box):
             w.configure(state="disabled" if on else "readonly")
         for w in self.locked:
             w.configure(state="disabled" if on else "normal")
@@ -534,6 +560,7 @@ class App(ttk.Frame):
                 done, failed, failures = batch.run(
                     plan, out, naming=naming, order=order, style=style,
                     copy_originals=self.copy_var.get(), start=start,
+                    background=BACKGROUND_LABELS[self.bg_var.get()],
                     progress=lambda *a: self.events.put(("card",) + a),
                     should_stop=self.stop_flag.is_set)
                 self.events.put(("finished", done, failed, failures))

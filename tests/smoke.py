@@ -518,6 +518,92 @@ def main():
               f"the two faces should come out the same size, got {back_face.size} "
               f"and {front_face.size}")
 
+        # ---------------------------------------- cards on a white bed
+        #
+        # A back printed in black measures 0 against a dark bed of 0 and there
+        # is nothing there to separate. On something white the same border is 0
+        # against 240, and it is the clearest thing on the sheet — which is the
+        # only way such a back ever shows an outline.
+        BW2, BH2 = 740, 1030
+        pale = Image.new("RGB", (BW2, BH2), (90, 120, 150))
+        ImageDraw.Draw(pale).rectangle([0, int(BH2 * .6), BW2, BH2], fill=(40, 30, 60))
+        inky = Image.new("RGB", (BW2, BH2), (0, 0, 0))
+        ImageDraw.Draw(inky).rectangle([22, 22, BW2 - 22, BH2 - 22],
+                                       outline=(150, 130, 90), width=5)
+
+        def sheet(bed):
+            page = Image.new("RGB", (BW2 * 2 + 160, BH2 + 160), bed)
+            page.paste(pale, (40, 80))
+            page.paste(inky, (40 + BW2 + 80, 80))
+            return page
+
+        dark_sheet, white_sheet = sheet((0, 0, 0)), sheet((242, 243, 240))
+
+        # The black-bordered back is found whole only on the white sheet, and
+        # only there does it have edges to take an angle from. The setting is
+        # given, not guessed — see BACKGROUNDS for why there is no guessing.
+        for label, page, want in (("dark", dark_sheet, False), ("white", white_sheet, True)):
+            bg = "light" if want else "dark"
+            halves = imaging.split_regions(page, background=bg)
+            check(halves is not None, f"{label} sheet: two cards should divide")
+            exact, _, _, edges = imaging.straighten(halves[1], background=bg)
+            close = abs(exact.size[0] - BW2) <= 20 and abs(exact.size[1] - BH2) <= 20
+            check(close is want,
+                  f"{label} bed: the inky back came out {exact.size} against its real "
+                  f"{BW2}x{BH2} — expected {'the real size' if want else 'short'}")
+            if want:
+                check(edges >= 3,
+                      f"on a white bed the back should have edges to measure, got {edges}")
+
+        # Dark is still the default, so an unset batch behaves as it always did.
+        check("dark" == imaging.BACKGROUNDS[0], "dark must remain the default")
+        check("auto" not in imaging.BACKGROUNDS,
+              "there is no auto: a white bed and a white-bordered card cropped "
+              "flush are the same pixels, so guessing can only invert a batch")
+
+        # The measurement that decided that. A yellow-bordered card scanned
+        # flush reads EXACTLY like a white backing — bright, flat, brighter than
+        # anything inside it — so the suggestion fires on both and neither is
+        # ever acted on.
+        poke = Image.new("RGB", (600, 840), (250, 210, 60))
+        d = ImageDraw.Draw(poke)
+        d.rectangle([45, 60, 555, 600], fill=(120, 160, 120))
+        d.rectangle([45, 640, 555, 800], fill=(245, 240, 225))
+        check(imaging.looks_light_bedded(white_sheet),
+              "a white backing should be worth suggesting")
+        check(imaging.looks_light_bedded(poke),
+              "a flush yellow border looks the same as a white backing — if this "
+              "ever stops being true, auto-detection becomes possible")
+        check(not imaging.looks_light_bedded(dark_sheet),
+              "a black bed is not worth suggesting")
+
+        # Rotation pads with the BED's colour, or a light-bedded scan gets four
+        # black corners and black is what a card looks like there.
+        check(imaging._bed_fill("light") == (255, 255, 255), "light pads white")
+        check(imaging._bed_fill("dark") == (0, 0, 0), "dark pads black")
+        tilted = white_sheet.rotate(1.2, resample=Image.BICUBIC,
+                                    fillcolor=(255, 255, 255))
+        halves = imaging.split_regions(tilted, background="light")
+        check(halves is not None and len(halves) == 2,
+              "a tilted white-bedded sheet should still divide into two")
+        _, _, found, _ = imaging.straighten(halves[1], background="light")
+        check(abs(found - 1.2) < 0.25,
+              f"white-bedded deskew found {found:+.2f}° where 1.20° was applied")
+
+        # End to end, and the faces come out the size of the card.
+        whitedir = os.path.join(work, "whitebed")
+        os.makedirs(whitedir)
+        white_sheet.save(os.path.join(whitedir, "0001.jpg"), quality=95)
+        wplan = batch.plan_scans(batch.list_images(whitedir), split="combined",
+                                 background="light")
+        wout = os.path.join(out, "whitebed")
+        done, failed, _ = batch.run(wplan, wout, start=1, background="light")
+        check(done == 1 and not failed, f"white-bed run: {done} done, {failed} failed")
+        for name in ("0001_1_front.jpg", "0001_2_back.jpg"):
+            face = imaging.load(os.path.join(wout, name))
+            check(abs(face.size[0] - BW2) <= 60 and abs(face.size[1] - BH2) <= 60,
+                  f"{name} came out {face.size} against the card's {BW2}x{BH2}")
+
         # ------------------------------------------------ a dark border
         #
         # The angle has to come from the card, not from whichever edge the

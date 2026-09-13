@@ -47,11 +47,43 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 #: band came off at 60% of its height, cut clean through the artwork.
 INK_THRESHOLD = 20
 
-#: How far above the bed a pixel has to sit to count as card.
+#: How far from the bed a pixel has to sit to count as card.
 BED_MARGIN = 4
 
 #: How much of the scan's outer border is taken to be bed when measuring it.
 BED_RING = 0.02
+
+#: Which way round a scan is: bed darker than the cards, or lighter.
+#:
+#: Everything here was written for a dark bed, and for a card with any ink on
+#: it that is the right way round. It stops being right on a back printed in
+#: black: a Lorcana back's border measures 0 against a bed of 0, the same
+#: NUMBER, and no threshold splits a number from itself. Scanned on something
+#: white the same border is 0 against 240 and the card's outline is the
+#: clearest thing on the sheet.
+#:
+#: Chosen, not detected, and dark by default. This was measured before it was
+#: decided: a white backing sheet reads as a bright, flat border, and so does a
+#: yellow-bordered Pokemon card scanned flush to its edges — ring median 250,
+#: spread 0, brighter than anything inside it, on BOTH. There is no statistic
+#: that separates a white bed from a white border, because there is nothing in
+#: the pixels to separate; the difference is which side of the edge the paper
+#: belongs to, and the scan does not record that.
+#:
+#: So there is no `auto`. Guessing would silently inverting every judgement the
+#: app makes on a whole batch of flush-cropped light-bordered cards, to save
+#: one click on the batches that actually are light-bedded.
+BACKGROUNDS = ("dark", "light")
+
+#: How bright and how UNIFORM a border has to read before the app will SUGGEST
+#: the light setting — never act on it. See `looks_light_bedded`.
+LIGHT_BED_LEVEL = 140
+BED_UNIFORMITY = 12
+
+#: The range a learned light-bed threshold is held to. There is no historical
+#: fixed value to cap it against, as there is for a dark bed, so it is simply
+#: kept somewhere sane.
+LIGHT_LIMITS = (60, 250)
 
 #: The reference card size all crop measurements are expressed against, so one
 #: set of numbers holds across scans that framed the card differently. Crops
@@ -192,6 +224,13 @@ def _value(im):
     return np.asarray(im.convert("RGB")).max(axis=2)
 
 
+def _border(value):
+    """The four sides of the scan's outer ring, which are usually bed."""
+    h, w = value.shape
+    ry, rx = max(1, int(h * BED_RING)), max(1, int(w * BED_RING))
+    return (value[:ry], value[-ry:], value[:, :rx], value[:, -rx:])
+
+
 def _bed_level(value):
     """
     How bright the scanner bed reads on THIS scan, from its outer border.
@@ -200,23 +239,62 @@ def _bed_level(value):
     scan divided in two, one of the four sides is the cut through the middle of
     a card, and any statistic that includes it reports a card as the bed.
     """
-    h, w = value.shape
-    ry, rx = max(1, int(h * BED_RING)), max(1, int(w * BED_RING))
-    sides = (value[:ry], value[-ry:], value[:, :rx], value[:, -rx:])
-    return min(float(np.percentile(side, 98)) for side in sides)
+    return min(float(np.percentile(side, 98)) for side in _border(value))
 
 
-def _mask(im):
+def _bed_floor(value):
+    """
+    The same for a light bed: how dark the BACKGROUND gets, not the card.
+
+    Mirrored end to end. The darkest of the bed rather than the brightest, and
+    the maximum across the sides rather than the minimum, because on a light
+    bed it is a card that drags a side DOWN.
+    """
+    return max(float(np.percentile(side, 2)) for side in _border(value))
+
+
+def looks_light_bedded(im):
+    """
+    Whether this scan's border COULD be a light background.
+
+    Bright and flat, which a white backing sheet is — and which a
+    white-bordered card cropped flush to its edges also is, indistinguishably.
+    So this is only ever used to suggest the setting to someone whose detection
+    has already failed, never to choose it for them.
+    """
+    ring = np.concatenate([side.ravel() for side in _border(_value(im))])
+    spread = np.percentile(ring, 75) - np.percentile(ring, 25)
+    return bool(np.median(ring) >= LIGHT_BED_LEVEL and spread <= BED_UNIFORMITY)
+
+
+def _mask(im, background="dark"):
     """
     Card against background, at a threshold read off this scan.
 
-    Capped at INK_THRESHOLD so no scan is read worse than by the fixed bar, and
-    lowered wherever the bed is cleaner than that — which is where the dark
-    cards live. A card whose own artwork measures 12 needs a bar below 12 to be
-    seen whole, and a bed sitting at 0 will happily give one.
+    On a dark bed the bar is capped at INK_THRESHOLD so no scan is read worse
+    than by the old fixed one, and lowered wherever the bed is cleaner than
+    that — which is where the dark cards live. A card whose own artwork
+    measures 12 needs a bar below 12 to be seen whole, and a bed sitting at 0
+    will happily give one.
+
+    On a light bed the whole comparison turns over: the card is what is DARKER
+    than the background. There is no historical bar to cap against, so the
+    learned one is just held somewhere sane.
     """
     value = _value(im)
+    if background == "light":
+        low, high = LIGHT_LIMITS
+        return value < min(high, max(low, _bed_floor(value) - BED_MARGIN))
     return value > min(INK_THRESHOLD, _bed_level(value) + BED_MARGIN)
+
+
+def _bed_fill(background="dark"):
+    """What to pad with when rotating: the bed's own colour, not black.
+
+    Filling a light-bedded scan's corners with black would hand `_card_box`
+    four black triangles, and on a light bed black is what a card looks like.
+    """
+    return (255, 255, 255) if background == "light" else (0, 0, 0)
 
 
 def _lit_runs_mask(m):
@@ -479,7 +557,7 @@ def _small(im, longest=SKEW_SIZE):
                      Image.BILINEAR)
 
 
-def straighten(im, reference=None):
+def straighten(im, reference=None, background="dark"):
     """
     Deskew and crop to the card, at the scan's OWN resolution.
 
@@ -498,10 +576,15 @@ def straighten(im, reference=None):
     every crop taken from it, and each interpolation costs a little edge
     definition on exactly the fine detail the crop exists to show.
     """
-    measured = [a for a in skew_sides(_mask(_small(im))).values() if a is not None]
+    measured = [a for a in skew_sides(_mask(_small(im), background)).values()
+                if a is not None]
     angle = float(np.median(measured)) if measured else 0.0
-    rotated = im.rotate(-angle, resample=Image.BICUBIC, expand=True, fillcolor=(0, 0, 0))
-    box = _card_box(_mask(rotated))
+    # Padded with the BED's colour. Filling a light-bedded scan's corners with
+    # black would hand the next step four black triangles, and on a light bed
+    # black is exactly what a card looks like.
+    rotated = im.rotate(-angle, resample=Image.BICUBIC, expand=True,
+                        fillcolor=_bed_fill(background))
+    box = _card_box(_mask(rotated, background))
     if box is None:
         return rotated, rotated, angle, len(measured)
     if reference:
@@ -610,7 +693,7 @@ def _cut_at(im, cut, vertical):
     return [im.crop((0, 0, w, cut)), im.crop((0, cut, w, h))]
 
 
-def split_regions(im, force=False):
+def split_regions(im, force=False, background="dark"):
     """
     A scan holding two cards, cut into two scans of one card each, in reading
     order — left then right, or top then bottom. None where it holds one card.
@@ -627,7 +710,7 @@ def split_regions(im, force=False):
     could be found — cards laid touching. Halving the detected content is a
     guess, so it is never made on the app's own initiative.
     """
-    m = _mask(im)
+    m = _mask(im, background)
     stats = _mask_stats(m)
     for axis in (0, 1):
         cut = _division(m, axis, stats)
@@ -647,7 +730,7 @@ def split_regions(im, force=False):
     return _cut_at(im, (y0 + y1) // 2, False)
 
 
-def clipped_edges(im, tolerance=2):
+def clipped_edges(im, tolerance=2, background="dark"):
     """
     Which of the card's sides run off the scan instead of ending on it.
 
@@ -666,7 +749,7 @@ def clipped_edges(im, tolerance=2):
     against a scan bed window often set to 87 or so — the two ends go first.
     """
     small = _small(im)
-    box = _card_box(_mask(small))
+    box = _card_box(_mask(small, background))
     if box is None:
         return []
     x0, y0, x1, y1 = box
@@ -677,7 +760,7 @@ def clipped_edges(im, tolerance=2):
                                    ("bottom", y1 >= h - 1 - tolerance)) if off]
 
 
-def divided_ok(regions):
+def divided_ok(regions, background="dark"):
     """
     Whether a scan divided WITHOUT a gap to go on came out as two cards.
 
@@ -689,12 +772,12 @@ def divided_ok(regions):
     anything about.
     """
     for i, region in enumerate(regions, 1):
-        if not _card_shaped(_mask(region)):
+        if not _card_shaped(_mask(region, background)):
             return False, f"half {i} of {len(regions)} is not card-shaped"
     return True, ""
 
 
-def probe(path):
+def probe(path, background="dark"):
     """
     Whether the scan at `path` holds two cards, decided from a small decode.
 
@@ -708,7 +791,7 @@ def probe(path):
         raw.draft("RGB", (PROBE_SIZE, PROBE_SIZE))
         im = ImageOps.exif_transpose(raw).convert("RGB")
     im.thumbnail((PROBE_SIZE, PROBE_SIZE), Image.BILINEAR)
-    return split_regions(im) is not None
+    return split_regions(im, background=background) is not None
 
 
 # ---------------------------------------------------------------- sheets

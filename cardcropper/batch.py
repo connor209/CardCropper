@@ -187,7 +187,8 @@ class Plan:
         return []
 
 
-def plan_scans(paths, split="auto", front_first=True, progress=None, probe=None):
+def plan_scans(paths, split="auto", front_first=True, progress=None, probe=None,
+               background="dark"):
     """
     Turn a sorted run of scans into cards.
 
@@ -217,7 +218,7 @@ def plan_scans(paths, split="auto", front_first=True, progress=None, probe=None)
     flipped is the difference between the settings feeling instant and feeling
     broken.
     """
-    probe = probe or imaging.probe
+    probe = probe or (lambda path: imaging.probe(path, background))
     ordered = sorted(paths, key=natural_key)
     cards, leftover, pending = [], [], None
     sides = (0, 1) if front_first else (1, 0)
@@ -266,7 +267,7 @@ def output_names(index, card, naming="grouped", order="crops-last", ext=".jpg"):
             for i, role in enumerate(roles)]
 
 
-def _scans_of(card, notes):
+def _scans_of(card, notes, background="dark"):
     """
     The card's two faces, each as its own scan, ready to be straightened.
 
@@ -284,14 +285,14 @@ def _scans_of(card, notes):
         return {"front": _io(imaging.load, card.front.path),
                 "back": _io(imaging.load, card.back.path)}
     source = _io(imaging.load, card.front.path)
-    regions = imaging.split_regions(source)
+    regions = imaging.split_regions(source, background=background)
     if regions is None:
         # The cards were laid touching, so there is no strip of bed to cut on.
         # Dividing at the middle is right whenever both halves are the same
         # card, which is every trading card — so check that it came out as two
         # cards rather than warning simply because the gap was missing.
-        regions = imaging.split_regions(source, force=True)
-        ok, why = imaging.divided_ok(regions)
+        regions = imaging.split_regions(source, force=True, background=background)
+        ok, why = imaging.divided_ok(regions, background)
         if not ok:
             notes.append(f"the two cards are touching and dividing down the "
                          f"middle did not come out right — {why}; check the crops")
@@ -342,7 +343,7 @@ def next_index(out_dir):
 SIZE_TOLERANCE = 0.03
 
 
-def _match_sizes(scans, faces, notes):
+def _match_sizes(scans, faces, notes, background="dark"):
     """
     Make a card's two faces the same size, because they are the same card.
 
@@ -364,7 +365,8 @@ def _match_sizes(scans, faces, notes):
         small, large = sizes[face], sizes[other]
         if all(s >= l * (1 - SIZE_TOLERANCE) for s, l in zip(small, large)):
             continue
-        exact, padded, angle, edges = imaging.straighten(scans[face], reference=large)
+        exact, padded, angle, edges = imaging.straighten(
+            scans[face], reference=large, background=background)
         notes.append(
             f"{face}: detected {small[0]}x{small[1]} against the {other}'s "
             f"{large[0]}x{large[1]} — too dark to find its own edge, so it was "
@@ -374,7 +376,8 @@ def _match_sizes(scans, faces, notes):
 
 
 def process_card(card, out_dir, index, naming="grouped", order="crops-last",
-                 style="grading", copy_originals=True, quality=95):
+                 style="grading", copy_originals=True, quality=95,
+                 background="dark"):
     """
     Write one card's four images and return (filenames, notes).
 
@@ -390,23 +393,28 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
     notes = []
     names = output_names(index, card, naming, order)
     by_role = dict(names)
-    scans = _scans_of(card, notes)
+    scans = _scans_of(card, notes, background)
     faces = {}
 
     for face in ("front", "back"):
         source = scans[face]
-        exact, padded, angle, edges = imaging.straighten(source)
+        exact, padded, angle, edges = imaging.straighten(source, background=background)
         ok, why = imaging.detection_ok(exact, source)
         if not ok:
             notes.append(f"{face}: {why}")
-        elif not card.combined and imaging.split_regions(source) is not None:
+            if background == "dark" and imaging.looks_light_bedded(source):
+                notes.append(f"{face}: its border is bright and flat, which is what "
+                             "a white backing looks like — if these were scanned on "
+                             "one, set the background to white backing")
+        elif not card.combined and imaging.split_regions(
+                source, background=background) is not None:
             # Cheap here, and the failure it catches is the expensive one: a
             # scan holding both faces, run as a single card, passes every check
             # above and produces crops of the PAIR's outer corners.
             notes.append(f"{face}: this scan looks like it holds two cards — "
                          "try the combined setting")
         faces[face] = (exact, padded)
-        clipped = imaging.clipped_edges(source)
+        clipped = imaging.clipped_edges(source, background=background)
         if clipped:
             notes.append(
                 f"{face}: the card runs off the {', '.join(clipped)} of the scan — "
@@ -422,7 +430,7 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
             notes.append(f"{face}: deskewed {angle:+.2f}°"
                          + (f" (from {edges} edge)" if edges == 1 else ""))
 
-    _match_sizes(scans, faces, notes)
+    _match_sizes(scans, faces, notes, background)
 
     draw = imaging.STYLES[style]
     for face in ("front", "back"):
@@ -452,7 +460,8 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
 
 
 def run(plan, out_dir, naming="grouped", order="crops-last", style="grading",
-        copy_originals=True, progress=None, should_stop=None, start=None):
+        copy_originals=True, progress=None, should_stop=None, start=None,
+        background="dark"):
     """
     Process every card in `plan`, reporting as it goes.
 
@@ -482,7 +491,8 @@ def run(plan, out_dir, naming="grouped", order="crops-last", style="grading",
         number = start + i - 1
         try:
             names, notes = process_card(card, out_dir, number, naming, order,
-                                        style, copy_originals)
+                                        style, copy_originals,
+                                        background=background)
             done += 1
             if progress:
                 progress(i, total, card, names, notes, None)

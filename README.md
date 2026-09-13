@@ -133,9 +133,30 @@ visible frame is printed — and never past the edge of the scan. The log says
 when it happens and what the two measurements were.
 
 This recovers the card's real extent. It cannot recover its *outline*: a black
-border against a black bed has nothing to see, whatever the crop is cut to. If
-you need the silhouette on backs like these, the bed has to be lighter than the
-card.
+border against a black bed has nothing to see, whatever the crop is cut to.
+
+### A white backing, for backs like those
+
+Set **Laid on a white backing** (`--background light`) and the whole comparison
+turns over: the card becomes what is *darker* than the background. Put a sheet
+of white paper behind the cards and a black-bordered back goes from 0 against 0
+to 0 against 240 — the clearest edge on the sheet. On a test pair the inky back
+went from detecting 697×987 with no measurable edge at all, to 740×1030 exact
+with all four edges usable.
+
+Use it for backs printed to the edge in black. A dark bed is still right for
+everything else, and is the default.
+
+**It is a setting, not a detection, and that was measured before it was
+decided.** A white backing sheet reads as a bright, flat border — ring median
+243, spread 3. A yellow-bordered Pokémon card scanned flush to its edges reads
+as a bright, flat border: median 250, spread 0, brighter than anything inside
+it. There is no statistic separating a white bed from a white border, because
+the difference is which side of the edge the paper is on and a scan does not
+record that. Guessing would invert every judgement the app makes across a whole
+batch of flush-cropped light-bordered cards, to save one click. So where
+detection fails and the border looks like it could be a backing, the log says
+so and leaves the choice to you.
 
 ### Scan a little wider than the card
 

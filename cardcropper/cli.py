@@ -40,6 +40,12 @@ def main():
     ap.add_argument("--front", choices=("first", "second"), default="first",
                     help="which half of a combined scan is the front: first is "
                          "the left or top one (default: first)")
+    ap.add_argument("--background", choices=imaging.BACKGROUNDS, default="dark",
+                    help="what the cards were laid on. light is for a white "
+                         "backing sheet, which is the only way a black-bordered "
+                         "back shows an outline at all. Not detected: a white bed "
+                         "and a white-bordered card cropped flush are the same "
+                         "pixels (default: dark)")
     ap.add_argument("--restart", action="store_true",
                     help="number this batch from 0001, overwriting any cards "
                          "already in the output folder. The default carries on "
@@ -71,7 +77,7 @@ def main():
 
     plan = batch.plan_scans(paths, split=args.split,
                             front_first=args.front == "first",
-                            progress=examining)
+                            progress=examining, background=args.background)
     combined = sum(1 for c in plan.cards if c.combined)
     if combined:
         print(f"{combined} of {len(plan.cards)} card(s) have both faces on one scan")
@@ -101,7 +107,8 @@ def main():
 
     done, failed, failures = batch.run(
         plan, args.out, naming=args.naming, order=args.order, style=args.style,
-        copy_originals=not args.no_originals, progress=report, start=start)
+        copy_originals=not args.no_originals, progress=report, start=start,
+        background=args.background)
     print(f"\n{done} card(s) written to {args.out}"
           + (f", {failed} failed" if failed else ""))
     # The failures again at the end. In a batch of a hundred the one that
