@@ -59,6 +59,28 @@ def make_full_art(dark_border=True):
     return card
 
 
+def make_dark_card(back=False):
+    """
+    A card as dark as the scanner bed in places.
+
+    Modern cards are not the navy-bordered Pokemon back this was written for.
+    A Lorcana card's lower band measures 12 against a bed of 0, and a League
+    back is near-black with a few gold lines on it. Against a fixed threshold
+    of 20 both read as background: the card's own dark edge is trimmed off it,
+    and a back broken into separate lit patches looks like two cards.
+    """
+    W, H = 1000, 1400
+    card = Image.new("RGB", (W, H), (6, 7, 18) if back else (18, 14, 34))
+    d = ImageDraw.Draw(card)
+    if back:
+        d.ellipse([230, 420, 770, 960], outline=(235, 225, 200), width=14)
+    else:
+        d.rectangle([0, 0, W, int(H * 0.58)], fill=(40, 90, 110))
+        d.rectangle([0, int(H * 0.58), W, H], fill=(7, 6, 12))
+        d.text((40, H - 55), "242/207 - EN - 13", fill=(120, 120, 125))
+    return card
+
+
 def make_combined(path, angle, gap=60, stacked=False, flipped=False):
     """
     A scan with BOTH faces on one bed, the way a flatbed gives them: card down,
@@ -322,6 +344,56 @@ def main():
         _, notes = batch.process_card(as_single.cards[0], warned, 1)
         check(any("two cards" in n for n in notes),
               f"no warning that the scan holds two cards: {notes}")
+
+        # -------------------------------------------------- dark cards
+        #
+        # The bar that separates card from bed is read off each scan. A fixed
+        # one cannot serve both a bed of 0 and a card whose artwork measures 12
+        # — and getting it wrong does not fail loudly, it quietly trims off
+        # whichever part of the card happens to be dark.
+        bed = 60
+        for label, card in (("front", make_dark_card()), ("back", make_dark_card(True))):
+            scan = Image.new("RGB", (1000 + bed * 2, 1400 + bed * 2), (0, 0, 0))
+            scan.paste(card, (bed, bed))
+            box = imaging._card_box(imaging._mask(scan))
+            want = (bed, bed, bed + 999, bed + 1399)
+            check(box is not None and max(abs(a - b) for a, b in zip(box, want)) <= 3,
+                  f"dark {label}: card box {box}, should be about {want}")
+            # And it must still read as ONE card, not as its lit patches.
+            check(len(imaging._card_runs(imaging._mask(scan), 0)) == 1,
+                  f"dark {label} broke into {len(imaging._card_runs(imaging._mask(scan), 0))} "
+                  "stretches — a dark patch inside a card is not a gap between two")
+
+        # The learned bar may never be looser than the fixed one, so no scan is
+        # read worse than it was before.
+        for name in sorted(os.listdir(scans)):
+            value = imaging._value(imaging.load(os.path.join(scans, name)))
+            learned = min(imaging.INK_THRESHOLD,
+                          imaging._bed_level(value) + imaging.BED_MARGIN)
+            check(learned <= imaging.INK_THRESHOLD,
+                  f"{name}: the learned threshold {learned} is looser than the "
+                  f"fixed {imaging.INK_THRESHOLD}, so this scan reads worse than before")
+
+        # End to end: a dark pair comes out as two cards, neither carrying a
+        # strip of the other. A 12% strip of the neighbour still passes the
+        # loose shape check, so the ratio is held to a real card's here.
+        darkdir = os.path.join(work, "dark")
+        os.makedirs(darkdir)
+        pairscan = Image.new("RGB", (2000 + bed * 2, 1400 + bed * 2), (0, 0, 0))
+        pairscan.paste(make_dark_card(), (bed, bed))
+        pairscan.paste(make_dark_card(True), (bed + 1000, bed))
+        pairscan.save(os.path.join(darkdir, "0001.jpg"), quality=95)
+        dark_plan = batch.plan_scans(batch.list_images(darkdir), split="combined")
+        darkout = os.path.join(out, "dark")
+        done, failed, _ = batch.run(dark_plan, darkout, start=1)
+        check(done == 1 and not failed, f"dark pair: {done} done, {failed} failed")
+        for name in ("0001_1_front.jpg", "0001_2_back.jpg"):
+            face = imaging.load(os.path.join(darkout, name))
+            ratio = max(face.size) / float(min(face.size))
+            check(1.30 <= ratio <= 1.45,
+                  f"dark pair {name} came out {ratio:.2f}:1 at {face.size} — a real "
+                  "card is about 1.36:1, so this carries part of the other card "
+                  "or lost part of its own")
 
         # ------------------------------------------------ a dark border
         #

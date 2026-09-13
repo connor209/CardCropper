@@ -41,6 +41,21 @@ straightens, crops and files. The judgement stays with you.
    than on brightness. A Pokémon back's navy border is as dark as the scanner
    bed by luminance, so a brightness mask finds the card's bright *interior*
    and reports the artwork as the border.
+
+   The bar separating card from bed is read off each scan rather than fixed.
+   Modern cards are not the navy-bordered back this was written for: a Lorcana
+   card's black lower band measures 12 against a bed of 0, and a League back is
+   near-black with a few gold lines on it. A fixed bar of 20 calls both of
+   those background — and it does not fail loudly, it trims off whichever part
+   of the card happens to be dark, or breaks a back into lit patches that look
+   like two separate cards. The learned bar is never looser than the fixed one,
+   so no scan reads worse than it did.
+
+   On top of that, the card's extent is grown outward from the rows and columns
+   that are certainly card, through the ones that still look like it — a column
+   crossing a near-black back is barely lit at all, but the few lit pixels it
+   has reach from the top of the card to the bottom, and scanner bed never does
+   that.
 4. **Cuts the corners and edges**, keeping a margin of background so the card's
    outline shows. A corner that has been rounded off is read from its profile
    as much as from whitening on its face.

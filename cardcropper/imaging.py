@@ -38,7 +38,20 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 #: the border and the bed are the same thing, so a luminance mask finds the
 #: card's bright INTERIOR and reports the artwork as the border. Value
 #: separates them cleanly (0 against 47) and works on a yellow front too.
+#:
+#: The most a pixel may measure and still be called background. A CEILING, not
+#: the figure used: the bar that actually separates card from bed is read off
+#: each scan. A modern near-black back measures 12 against a bed of 0, so a
+#: fixed 20 calls the card background — and it does not fail loudly, it trims
+#: whatever part of the card happens to be dark. A Lorcana card's black lower
+#: band came off at 60% of its height, cut clean through the artwork.
 INK_THRESHOLD = 20
+
+#: How far above the bed a pixel has to sit to count as card.
+BED_MARGIN = 4
+
+#: How much of the scan's outer border is taken to be bed when measuring it.
+BED_RING = 0.02
 
 #: The reference card size all crop measurements are expressed against, so one
 #: set of numbers holds across scans that framed the card differently. Crops
@@ -118,6 +131,15 @@ EDGE_AGREEMENT = 0.35
 #: Fewest rows an edge needs before its angle means anything.
 MIN_EDGE_POINTS = 20
 
+#: How much of a row or column has to be lit before it is certainly card, and
+#: the looser pair of tests that carry that out to the card's real edge: either
+#: still meaningfully lit, or barely lit but with its lit pixels REACHING right
+#: across the card. The second is what sees a near-black back, where a column
+#: is a few gold lines at the top and the bottom and almost nothing between.
+STRONG_LIT = 0.4
+WEAK_LIT = 0.12
+WEAK_REACH = 0.5
+
 #: How much of an edge may lie on the image boundary before the edge is thrown
 #: away as not being the card's: a card running off the scan, or the cut side
 #: of a scan that was divided down the middle.
@@ -159,29 +181,149 @@ def _font(size, bold=False):
 
 
 def _value(im):
-    """max(R,G,B) per pixel — see INK_THRESHOLD for why not luminance."""
-    return np.asarray(im.convert("RGB")).astype(int).max(axis=2)
+    """
+    max(R,G,B) per pixel — see INK_THRESHOLD for why not luminance.
+
+    Left as bytes. Widening to the platform int first is the obvious way to
+    write this and allocates 360MB for a flatbed scan of two cards, to hold
+    numbers that never exceed 255 and are only ever compared against a
+    threshold.
+    """
+    return np.asarray(im.convert("RGB")).max(axis=2)
+
+
+def _bed_level(value):
+    """
+    How bright the scanner bed reads on THIS scan, from its outer border.
+
+    The MINIMUM across the four sides rather than a figure mixing them: on a
+    scan divided in two, one of the four sides is the cut through the middle of
+    a card, and any statistic that includes it reports a card as the bed.
+    """
+    h, w = value.shape
+    ry, rx = max(1, int(h * BED_RING)), max(1, int(w * BED_RING))
+    sides = (value[:ry], value[-ry:], value[:, :rx], value[:, -rx:])
+    return min(float(np.percentile(side, 98)) for side in sides)
 
 
 def _mask(im):
-    return _value(im) > INK_THRESHOLD
+    """
+    Card against background, at a threshold read off this scan.
+
+    Capped at INK_THRESHOLD so no scan is read worse than by the fixed bar, and
+    lowered wherever the bed is cleaner than that — which is where the dark
+    cards live. A card whose own artwork measures 12 needs a bar below 12 to be
+    seen whole, and a bed sitting at 0 will happily give one.
+    """
+    value = _value(im)
+    return value > min(INK_THRESHOLD, _bed_level(value) + BED_MARGIN)
 
 
-def _card_box(m):
+def _lit_runs_mask(m):
+    """Where a run of EDGE_RUN lit pixels STARTS on each row of `m`."""
+    runs = m.copy()
+    for k in range(1, EDGE_RUN):
+        runs[:, :-k] &= m[:, k:]
+    runs[:, -EDGE_RUN:] = False
+    return runs
+
+
+def _row_stats(m):
     """
-    The card's extent, found from how MUCH of each row and column is lit rather
-    than from any single lit pixel. JPEG noise in the black margin clears the
-    ink threshold on its own, so an any-pixel bounding box reaches well past
-    the card — and then every crop is taken against background instead of the
-    border.
+    Per row: how much of it is lit, and how far its runs of lit pixels reach.
+
+    The reach matters where the fraction does not. A column crossing a
+    near-black back is barely lit at all — a few gold lines — but those lines
+    are at the top and the bottom of it, so its reach is the whole card. A
+    column of scanner bed has neither.
     """
-    lit_cols = m.mean(axis=0) > 0.4
-    lit_rows = m.mean(axis=1) > 0.4
-    xs = np.where(lit_cols)[0]
-    ys = np.where(lit_rows)[0]
-    if not len(xs) or not len(ys):
+    runs = _lit_runs_mask(m)
+    has = runs.any(axis=1)
+    first = runs.argmax(axis=1)
+    last = runs.shape[1] - 1 - runs[:, ::-1].argmax(axis=1)
+    return m.mean(axis=1), np.where(has, last - first + 1, 0)
+
+
+def _strong(fraction):
+    lit = np.where(fraction > STRONG_LIT)[0]
+    return (int(lit[0]), int(lit[-1])) if len(lit) else None
+
+
+def _weak(fraction, reach, across):
+    return (fraction > WEAK_LIT) | (reach > WEAK_REACH * across)
+
+
+def _grow(lo, hi, weak):
+    """Extend a stretch of certain card through everything still plausible."""
+    while lo > 0 and weak[lo - 1]:
+        lo -= 1
+    while hi < len(weak) - 1 and weak[hi + 1]:
+        hi += 1
+    return lo, hi
+
+
+def _mask_stats(m):
+    """
+    Row and column statistics for one mask, measured once.
+
+    Deliberately a value that gets passed around rather than something each
+    caller works out for itself: a division looks at both axes, checks the
+    shape of both halves, and every one of those wants the same two profiles
+    off the same mask. Recomputing them is the single most expensive thing in
+    the pipeline on a full flatbed scan.
+    """
+    return _row_stats(m), _row_stats(np.ascontiguousarray(m.T))
+
+
+def _card_box(m, stats=None):
+    """
+    The card's extent: rows and columns that are certainly card, grown out
+    through the ones that still look like it.
+
+    Found from how MUCH of each row and column is lit rather than from any
+    single lit pixel, because JPEG noise in the black margin clears the ink
+    threshold on its own and an any-pixel bounding box reaches well past the
+    card. But a flat "40% of the row is lit" bar cuts the other way on a card
+    whose own edge is dark — a black band across the bottom, a dark cloak down
+    one side — and takes the card's real edge off with it. So the bar finds the
+    card and a looser test carries the edge out to where the card actually
+    stops.
+    """
+    rows, cols = stats if stats else _mask_stats(m)
+    down, across = _strong(rows[0]), _strong(cols[0])
+    if down is None or across is None:
         return None
-    return int(xs[0]), int(ys[0]), int(xs[-1]), int(ys[-1])
+    y0, y1 = _grow(*down, _weak(*rows, across[1] - across[0] + 1))
+    x0, x1 = _grow(*across, _weak(*cols, down[1] - down[0] + 1))
+    return x0, y0, x1, y1
+
+
+def _card_runs(m, axis, stats=None):
+    """
+    Stretches of card along `axis`, each grown out of a certainly-card seed.
+
+    This is what separates two cards from one: the bed between them is neither
+    certainly card nor plausibly card, so the stretches stop there. A dark
+    patch INSIDE a card is plausible and does not stop them, which is the whole
+    reason this is not a run of "40% lit" columns — on a near-black back those
+    come out as a handful of separate stretches, and two of them look exactly
+    like two cards.
+    """
+    rows, cols = stats if stats else _mask_stats(m)
+    along, other = (cols, _strong(rows[0])) if axis == 0 else (rows, _strong(cols[0]))
+    if other is None:
+        return []
+    strong = along[0] > STRONG_LIT
+    weak = _weak(*along, other[1] - other[0] + 1)
+    out, i, n = [], 0, len(strong)
+    while i < n:
+        if not strong[i]:
+            i += 1
+            continue
+        lo, hi = _grow(i, i, weak)
+        out.append((lo, hi))
+        i = hi + 1
+    return out
 
 
 def _edge_profile(m):
@@ -202,13 +344,9 @@ def _edge_profile(m):
     band = m[y0 + skip:y1 - skip]
     if band.shape[0] < MIN_EDGE_POINTS:
         return None, None
-    # A pixel starts a run when it and the next EDGE_RUN-1 are all lit. Done
-    # across the whole band at once: a per-row Python loop over four edges of a
-    # 40-megapixel scan costs more than everything else in the pipeline.
-    runs = band.copy()
-    for k in range(1, EDGE_RUN):
-        runs[:, :-k] &= band[:, k:]
-    runs[:, -EDGE_RUN:] = False
+    # Done across the whole band at once: a per-row Python loop over four edges
+    # of a 40-megapixel scan costs more than everything else in the pipeline.
+    runs = _lit_runs_mask(band)
     found = runs.any(axis=1)
     if found.sum() < MIN_EDGE_POINTS:
         return None, None
@@ -400,34 +538,22 @@ SPLIT_MIN_GAP = 0.003
 PROBE_SIZE = 900
 
 
-def _runs(profile, threshold=0.4):
-    """Contiguous runs of `profile > threshold`, as inclusive (start, end)."""
-    lit = profile > threshold
-    runs, start = [], None
-    for i, on in enumerate(lit):
-        if on and start is None:
-            start = i
-        elif not on and start is not None:
-            runs.append((start, i - 1))
-            start = None
-    if start is not None:
-        runs.append((start, len(lit) - 1))
-    return runs
-
-
-def _division(m, axis):
+def _division(m, axis, stats=None):
     """
     Where a mask divides into exactly two cards along `axis` (0 for a vertical
     cut between side-by-side cards, 1 for a horizontal one between stacked
     cards), or None.
 
-    Measured on how MUCH of each column is lit, for the same reason `_card_box`
-    is: JPEG noise in the black bed clears the ink threshold by itself, so a
-    gap defined as "no lit pixel at all" is never found on a real scan.
+    The stretches come from `_card_runs` rather than from a plain run of lit
+    columns, because a plain run breaks up inside a dark card: a near-black
+    back is a handful of separate lit stretches with unlit artwork between
+    them, and any two of those read as two cards. What was actually produced
+    was a card and a half in one half and the rest in the other, and both
+    passed the shape check.
     """
-    profile = m.mean(axis=axis)
-    n = len(profile)
-    runs = [r for r in _runs(profile) if r[1] - r[0] + 1 >= n * SPLIT_MIN_SPAN]
+    n = m.shape[1 - axis]
+    runs = [r for r in _card_runs(m, axis, stats)
+            if r[1] - r[0] + 1 >= n * SPLIT_MIN_SPAN]
     if len(runs) != 2:
         return None
     if runs[1][0] - runs[0][1] - 1 < max(2, n * SPLIT_MIN_GAP):
@@ -473,8 +599,9 @@ def split_regions(im, force=False):
     guess, so it is never made on the app's own initiative.
     """
     m = _mask(im)
+    stats = _mask_stats(m)
     for axis in (0, 1):
-        cut = _division(m, axis)
+        cut = _division(m, axis, stats)
         if cut is None:
             continue
         vertical = axis == 0
@@ -483,7 +610,7 @@ def split_regions(im, force=False):
             return _cut_at(im, cut, vertical)
     if not force:
         return None
-    box = _card_box(m)
+    box = _card_box(m, stats)
     w, h = im.size
     x0, y0, x1, y1 = box if box else (0, 0, w - 1, h - 1)
     if (x1 - x0) >= (y1 - y0):
