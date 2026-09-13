@@ -58,7 +58,11 @@ straightens, crops and files. The judgement stays with you.
    that.
 4. **Cuts the corners and edges**, keeping a margin of background so the card's
    outline shows. A corner that has been rounded off is read from its profile
-   as much as from whitening on its face.
+   as much as from whitening on its face. That margin is never invented: on a
+   scan cropped flush to the card the crop runs to the edge of what was
+   actually scanned, rather than padding out to a background the card was never
+   photographed against. A corner crop showing an invented silhouette is worse
+   than one showing none.
 5. **Sharpens lightly, and never enhances contrast.** Auto-contrast on a navy
    border turns JPEG noise into speckle indistinguishable from whitening —
    damage the card does not have.
