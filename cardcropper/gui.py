@@ -53,9 +53,15 @@ SPLIT_LABELS = {
     "One face per file — front, back, front…": "single",
     "Both faces on every scan": "combined",
 }
+#: First entry is the default, and it is the one that works it out: every card
+#: in a batch has a different front and the same back, so the side that looks
+#: like itself on every card is the back. Where the batch cannot show that — a
+#: couple of cards, or the same card over and over — it falls back to the first
+#: of each pair and says so.
 FRONT_LABELS = {
-    "Front is the left / top one": True,
-    "Front is the right / bottom one": False,
+    "Front: work it out": "auto",
+    "Front is the left / top one": "first",
+    "Front is the right / bottom one": "second",
 }
 #: What the cards were laid on. Chosen rather than detected: a white backing
 #: sheet and a yellow-bordered card cropped flush to its edges are the same
@@ -351,6 +357,10 @@ class App(ttk.Frame):
         return (SPLIT_LABELS[self.split_var.get()], FRONT_LABELS[self.front_var.get()],
                 BACKGROUND_LABELS[self.bg_var.get()])
 
+    def _needs_images(self, split, front):
+        """Whether planning has to open the scans, and so wants a thread."""
+        return split == "auto" or front == "auto"
+
     def _probe(self, path):
         """
         imaging.probe, remembered — see `self.probed`.
@@ -385,17 +395,18 @@ class App(ttk.Frame):
         if added is None and self.cards:
             self._say("Re-pairing every scan — any swaps, removals or reordering "
                       "are undone.")
-        split, front_first, background = self._pairing()
-        if split == "auto":
+        split, front, background = self._pairing()
+        if self._needs_images(split, front):
             self._say("Examining scans…")
             self._busy(True)
 
             def work():
                 try:
                     plans = [batch.plan_scans(
-                        b, split=split, front_first=front_first, probe=self._probe,
+                        b, split=split, front=front, probe=self._probe,
                         background=background,
-                        progress=lambda i, n, p: self.events.put(("examining", i, n)))
+                        progress=lambda i, n, p: self.events.put(("examining", i, n)),
+                        faces=lambda i, n: self.events.put(("comparing", i, n)))
                         for b in self.batches]
                     self.events.put(("planned", plans, added))
                 except Exception:                           # noqa: BLE001
@@ -404,7 +415,7 @@ class App(ttk.Frame):
             self.planner = threading.Thread(target=work, daemon=True)
             self.planner.start()
             return
-        self._planned([batch.plan_scans(b, split=split, front_first=front_first,
+        self._planned([batch.plan_scans(b, split=split, front=front,
                                         background=background)
                        for b in self.batches], added)
 
@@ -423,6 +434,8 @@ class App(ttk.Frame):
             what += f" {combined} have both faces on one scan."
         self._say(what)
         for plan in plans:
+            for note in plan.notes:
+                self._say("  " + note)
             for w in plan.warnings:
                 self._say("  " + w)
         self._refresh()
@@ -577,6 +590,9 @@ class App(ttk.Frame):
                 if event[0] == "examining":
                     _, i, total = event
                     self.count.configure(text=f"examining {i} / {total}")
+                elif event[0] == "comparing":
+                    _, i, total = event
+                    self.count.configure(text=f"comparing faces {i} / {total}")
                 elif event[0] == "planned":
                     _, plans, added = event
                     self._planned(plans, added)

@@ -214,14 +214,20 @@ combined scan run as a single card looks wrong until you open the crops.
 | **One face per file** | A folder you already know is front, back, front, back. Nothing is examined, so adding a folder of several hundred from a cloud-synced drive is immediate. A scan that looks like it holds two cards is still called out in the log. |
 | **Both faces on every scan** | Every file holds a pair — including cards laid *touching*, where there is no strip of bed to find and the app will not divide on a guess of its own. Here it divides down the middle of what it found, which is the seam whenever both halves are the same card, and checks that two card-shaped halves came out of it. It only says anything if they did not. |
 
-**Front is the left / top one** says which half of a combined scan leads. The
-app does not try to work this out from the pixels: the honest signal — that
-every back in a batch looks like every other back — needs the whole batch
-before it can answer for one card, and the quick ones (a back is darker, a back
-is symmetrical) are wrong on enough card games to put the wrong face in the
-gallery thumbnail without telling you. The scanner lays them down the same way
-every time, so it is one setting for the batch, and **Swap front/back** for the
-row that is not.
+**Front: work it out** reads which side is the front off the batch, and is the
+default. No single card can say — it has two pictures and nothing to choose
+between them — but a batch can: every card has a different front and the *same*
+back, so the side that looks like itself across the batch is the back. That is
+the only honest signal. The quick ones (a back is darker, plainer, symmetrical)
+are wrong on enough card games to put the wrong face in the eBay gallery
+thumbnail without telling you.
+
+It declines rather than guesses. Fewer than three cards is not evidence, and
+neither is the same card scanned over and over — a playset, a stack of bulk
+commons — where the fronts match each other as exactly as the backs do and
+being alike no longer picks anything out. In both cases it takes the first of
+each pair, says so in the log, and leaves you to check. The explicit settings
+are still there, and **Swap front/back** still fixes a single row.
 
 A face cut out of a combined scan is written as the card itself — deskewed, cut
 out, with the same thin margin of bed the crops keep — because there is no

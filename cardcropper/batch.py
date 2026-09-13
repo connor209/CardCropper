@@ -13,6 +13,8 @@ import shutil
 import time
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from . import imaging
 
 #: Where a crop sits relative to its card's original scans.
@@ -178,6 +180,9 @@ class Plan:
     """A pairing of a list of files, plus whatever could not be paired."""
     cards: list = field(default_factory=list)
     leftover: list = field(default_factory=list)
+    #: Things worth saying about how the pairing was arrived at, as opposed to
+    #: `warnings`, which are things that need acting on.
+    notes: list = field(default_factory=list)
 
     @property
     def warnings(self):
@@ -187,8 +192,119 @@ class Plan:
         return []
 
 
-def plan_scans(paths, split="auto", front_first=True, progress=None, probe=None,
-               background="dark"):
+#: Which half of a combined scan, or which file of a pair, is the front.
+#:
+#: `auto` works it out from the batch rather than from any one card: every card
+#: has a different front and the SAME back, so the side that looks like itself
+#: on every card is the back. That is the only honest signal. The quick ones —
+#: a back is darker, a back is symmetrical — are wrong on enough card games to
+#: put the wrong face in the gallery thumbnail without saying so.
+FRONTS = ("auto", "first", "second")
+
+#: How many cards are enough to tell a back from a front, how many are worth
+#: looking at, and how much tighter the back has to be before the answer is
+#: believed. Two cards give one comparison per side and that is not evidence;
+#: a dozen is plenty and reading more only costs time.
+FACE_MIN_CARDS = 3
+FACE_SAMPLE = 12
+FACE_CONFIDENCE = 1.6
+
+#: Below this, a set of faces is all the same design. Both sides reading as
+#: the same design is what a batch of ONE card repeated looks like — a playset
+#: of the same card, a stack of bulk commons — and there the fronts match each
+#: other as exactly as the backs do. Neither side is then the odd one out and
+#: there is nothing to answer.
+FACE_SAME = 0.15
+
+#: Two faces are never bit-identical on a real scan, but a generated one can
+#: be, and dividing by zero to report how sure we are helps nobody.
+FACE_FLOOR = 0.02
+
+#: The size faces are compared at. Small on purpose: the question is whether
+#: two cards carry the same DESIGN, and at 48x67 a shared back is nearly
+#: identical while two different fronts are nothing alike. Larger would only
+#: add print grain and wear for the comparison to trip over.
+FACE_THUMB = (48, 67)
+
+
+def _descriptor(im):
+    """
+    A face reduced to something two cards can be compared by.
+
+    Small, grey and normalised for exposure, because none of brightness,
+    colour balance or scan-to-scan gain says anything about which design is
+    printed on the card.
+    """
+    grey = np.asarray(im.convert("L").resize(FACE_THUMB, imaging.Image.BILINEAR),
+                      dtype=float)
+    grey -= grey.mean()
+    spread = grey.std()
+    return grey / spread if spread > 1e-6 else grey
+
+
+def _both_faces(card, background):
+    """The card's two faces, small and cropped to the card, as planned."""
+    if card.combined:
+        whole = imaging.load_small(card.front.path)
+        regions = imaging.split_regions(whole, force=True, background=background)
+        faces = [regions[card.front.side], regions[card.back.side]]
+    else:
+        faces = [imaging.load_small(card.front.path),
+                 imaging.load_small(card.back.path)]
+    return [imaging.card_only(face, background) for face in faces]
+
+
+def _spread(descriptors):
+    """How unalike a set of faces are — the median distance between any two."""
+    gaps = [float(np.abs(a - b).mean())
+            for i, a in enumerate(descriptors) for b in descriptors[i + 1:]]
+    return float(np.median(gaps)) if gaps else 0.0
+
+
+def detect_back(cards, background="dark", progress=None):
+    """
+    Which side of these cards holds the back, read off the batch as a whole.
+
+    Every card in a batch has a different front and the same back, so of the
+    two sides the one that looks like itself across the batch is the back. It
+    is a property no single card has — one card has two pictures and nothing to
+    say which is which — which is why this is the signal worth using and why it
+    declines to answer for a batch too small to show it.
+
+    Returns (side, confidence): 0 where the side currently called the FRONT is
+    really the back, 1 where the planning was right, None where the batch
+    cannot say — a handful of cards, or the same card scanned repeatedly, where
+    both sides look alike and neither reading is supported.
+    """
+    sample = cards[:FACE_SAMPLE]
+    if len(sample) < FACE_MIN_CARDS:
+        return None, 0.0
+    sides = ([], [])
+    for i, card in enumerate(sample, 1):
+        if progress:
+            progress(i, len(sample))
+        try:
+            first, second = _both_faces(card, background)
+        except Exception:                               # noqa: BLE001
+            continue                                    # it fails loudly in the run
+        sides[0].append(_descriptor(first))
+        sides[1].append(_descriptor(second))
+    if len(sides[0]) < FACE_MIN_CARDS:
+        return None, 0.0
+    spreads = [_spread(side) for side in sides]
+    tight = 0 if spreads[0] < spreads[1] else 1
+    loose = 1 - tight
+    if spreads[loose] < FACE_SAME:
+        # Both sides are one design across the batch: the same card, scanned
+        # over and over. The backs match, and so do the fronts, so being alike
+        # no longer picks anything out.
+        return None, 1.0
+    confidence = spreads[loose] / max(spreads[tight], FACE_FLOOR)
+    return (tight, confidence) if confidence >= FACE_CONFIDENCE else (None, confidence)
+
+
+def plan_scans(paths, split="auto", front="auto", progress=None, probe=None,
+               background="dark", faces=None):
     """
     Turn a sorted run of scans into cards.
 
@@ -203,13 +319,10 @@ def plan_scans(paths, split="auto", front_first=True, progress=None, probe=None,
     stranded beside combined scans is called out instead of being paired across
     them with another stray from further down the folder.
 
-    `front_first` says which half of a combined scan is the front. There is no
-    attempt to work that out from the pixels: the honest signal — that every
-    back in a batch looks like every other back — needs the whole batch, and
-    the dishonest ones (a back is darker, a back is symmetrical) are wrong on
-    enough card games to put the wrong face in the gallery thumbnail without
-    saying so. The scanner puts them down the same way every time, so this is
-    one setting for the batch and a Swap for the row that is not.
+    `front` says which half of a combined scan, or which file of a pair, leads.
+    `auto` asks the batch: see `detect_back`. Where the batch cannot say it
+    falls back to `first` and says so, because a guess the operator can see is
+    worth more than one they cannot.
 
     `progress(i, total, path)` is called as each file is examined — only in
     `auto`, which is the only mode that opens them. `probe(path)` replaces the
@@ -221,7 +334,7 @@ def plan_scans(paths, split="auto", front_first=True, progress=None, probe=None,
     probe = probe or (lambda path: imaging.probe(path, background))
     ordered = sorted(paths, key=natural_key)
     cards, leftover, pending = [], [], None
-    sides = (0, 1) if front_first else (1, 0)
+    sides = (1, 0) if front == "second" else (0, 1)
     for i, path in enumerate(ordered, 1):
         if progress and split == "auto":
             progress(i, len(ordered), path)
@@ -244,12 +357,35 @@ def plan_scans(paths, split="auto", front_first=True, progress=None, probe=None,
             pending = None
     if pending is not None:
         leftover.append(pending)
-    return Plan(cards=cards, leftover=leftover)
+
+    plan = Plan(cards=cards, leftover=leftover)
+    if front != "auto":
+        return plan
+    side, confidence = detect_back(cards, background, progress=faces)
+    if side is None:
+        plan.notes.append(
+            "could not tell the front from the back across this batch"
+            + (" (too few cards to compare)" if not confidence else
+               " (both sides look the same on every card — the same card "
+               "scanned over and over?)" if confidence <= 1.0 else
+               f" (the two sides are only {confidence:.1f}x apart)")
+            + " — taking the first of each pair as the front; check the rows")
+    elif side == 0:
+        for card in plan.cards:
+            card.front, card.back = card.back, card.front
+        plan.notes.append(
+            f"the second of each pair is the front — the first is the same on "
+            f"every card, so it is the back ({confidence:.1f}x more alike)")
+    else:
+        plan.notes.append(
+            f"the first of each pair is the front — the second is the same on "
+            f"every card, so it is the back ({confidence:.1f}x more alike)")
+    return plan
 
 
 def pair_sequential(paths):
     """Pair a sorted run of one-face scans — `plan_scans` without the probe."""
-    return plan_scans(paths, split="single")
+    return plan_scans(paths, split="single", front="first")
 
 
 def output_names(index, card, naming="grouped", order="crops-last", ext=".jpg"):

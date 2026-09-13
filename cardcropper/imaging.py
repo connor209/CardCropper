@@ -789,21 +789,40 @@ def divided_ok(regions, background="dark"):
     return True, ""
 
 
-def probe(path, background="dark"):
+def load_small(path, longest=PROBE_SIZE):
     """
-    Whether the scan at `path` holds two cards, decided from a small decode.
+    A scan opened at a fraction of its size, for the questions that do not need
+    the pixels — how many cards are on it, and which face is which.
 
-    Planning a batch means answering this for every file before any cropping
-    starts, and answering it from full-resolution pixels would mean decoding
-    the whole folder twice. JPEG's DCT scaling gives the reduced image almost
-    free, and the question — is there a strip of bed through the middle — is
-    one a 900px copy answers as well as the original.
+    JPEG's DCT scaling gives the reduced image almost free, which is what makes
+    it affordable to look at every file in a folder before any cropping starts.
+    The alternative is decoding the whole folder twice.
     """
     with Image.open(path) as raw:
-        raw.draft("RGB", (PROBE_SIZE, PROBE_SIZE))
+        raw.draft("RGB", (longest, longest))
         im = ImageOps.exif_transpose(raw).convert("RGB")
-    im.thumbnail((PROBE_SIZE, PROBE_SIZE), Image.BILINEAR)
-    return split_regions(im, background=background) is not None
+    im.thumbnail((longest, longest), Image.BILINEAR)
+    return im
+
+
+def card_only(im, background="dark"):
+    """
+    `im` cropped to the card on it, so two scans can be compared like for like.
+
+    Framing is not a property of the card: the same card scanned twice sits
+    differently in the frame, and a comparison that includes the bed measures
+    the scanner rather than the card.
+    """
+    box = _card_box(_mask(im, background))
+    if box is None:
+        return im
+    x0, y0, x1, y1 = box
+    return im.crop((x0, y0, x1 + 1, y1 + 1))
+
+
+def probe(path, background="dark"):
+    """Whether the scan at `path` holds two cards, from a small decode."""
+    return split_regions(load_small(path), background=background) is not None
 
 
 # ---------------------------------------------------------------- sheets

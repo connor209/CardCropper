@@ -10,6 +10,7 @@ it, which is the worst place to find it.
 
 import math
 import os
+import random
 import shutil
 import sys
 import tempfile
@@ -264,8 +265,8 @@ def main():
 
         # `--front second` puts the other half in front, and Swap is the same
         # operation per row.
-        flipped = batch.plan_scans(batch.list_images(both), front_first=False)
-        check(flipped.cards[0].front.side == 1, "front_first=False was ignored")
+        flipped = batch.plan_scans(batch.list_images(both), front="second")
+        check(flipped.cards[0].front.side == 1, "--front second was ignored")
 
         # A stray single scan beside combined ones is reported, never paired
         # across them with another stray from further down the folder.
@@ -527,6 +528,90 @@ def main():
               and abs(back_face.size[1] - front_face.size[1]) <= 8,
               f"the two faces should come out the same size, got {back_face.size} "
               f"and {front_face.size}")
+
+        # ------------------------------ telling the front from the back
+        #
+        # No single card can say which of its two pictures is the front — it has
+        # two pictures and nothing to choose between them. A BATCH can: every
+        # card has a different front and the same back, so the side that looks
+        # like itself across the batch is the back. That is the only honest
+        # signal; a back is not reliably darker, or plainer, or symmetrical.
+        FW, FH = 740, 1030
+
+        def shared_back():
+            card = Image.new("RGB", (FW, FH), (16, 22, 60))
+            d = ImageDraw.Draw(card)
+            d.ellipse([170, 320, 570, 720], outline=(220, 185, 110), width=14)
+            d.rectangle([34, 34, FW - 34, FH - 34], outline=(220, 185, 110), width=6)
+            return card
+
+        def unique_front(seed):
+            rng = random.Random(seed)
+            card = Image.new("RGB", (FW, FH), (rng.randrange(60, 200),) * 3)
+            d = ImageDraw.Draw(card)
+            for _ in range(14):
+                x, y = rng.randrange(0, FW - 200), rng.randrange(0, FH - 200)
+                d.rectangle([x, y, x + rng.randrange(60, 200),
+                             y + rng.randrange(60, 200)],
+                            fill=(rng.randrange(255), rng.randrange(255),
+                                  rng.randrange(255)))
+            return card
+
+        def a_batch(name, count, back_left, one_card=False, separate=False):
+            folder = os.path.join(work, name)
+            os.makedirs(folder)
+            for i in range(1, count + 1):
+                f = unique_front(0 if one_card else i)
+                left, right = (shared_back(), f) if back_left else (f, shared_back())
+                if separate:
+                    left.save(os.path.join(folder, f"{2 * i - 1:04d}.jpg"), quality=93)
+                    right.save(os.path.join(folder, f"{2 * i:04d}.jpg"), quality=93)
+                else:
+                    page = Image.new("RGB", (FW * 2 + 160, FH + 80), (0, 0, 0))
+                    page.paste(left, (40, 40))
+                    page.paste(right, (40 + FW + 80, 40))
+                    page.save(os.path.join(folder, f"{i:04d}.jpg"), quality=93)
+            return folder
+
+        def front_taken_from(card, separate):
+            if separate:
+                return "second" if card.front.path > card.back.path else "first"
+            return "second" if card.front.side == 1 else "first"
+
+        for name, count, back_left, one, sep, want in (
+                ("fb-right", 8, False, False, False, "first"),
+                ("fb-left", 8, True, False, False, "second"),
+                ("fb-three", 3, True, False, False, "second"),
+                ("fb-two", 2, True, False, False, "first"),
+                ("fb-same", 6, True, True, False, "first"),
+                ("fb-sep-2nd", 8, False, False, True, "first"),
+                ("fb-sep-1st", 8, True, False, True, "second")):
+            folder = a_batch(name, count, back_left, one, sep)
+            plan = batch.plan_scans(batch.list_images(folder),
+                                    split="single" if sep else "combined")
+            check(plan.cards, f"{name}: nothing planned")
+            taken = {front_taken_from(c, sep) for c in plan.cards}
+            check(taken == {want},
+                  f"{name}: the front was taken from {taken}, expected {{'{want}'}} "
+                  f"— notes: {plan.notes}")
+            check(plan.notes, f"{name}: the decision should be reported")
+
+        # The two that must DECLINE rather than guess, and say why.
+        two = batch.plan_scans(batch.list_images(os.path.join(work, "fb-two")),
+                               split="combined")
+        check(any("too few cards" in n for n in two.notes),
+              f"two cards is not evidence, and should say so: {two.notes}")
+        same = batch.plan_scans(batch.list_images(os.path.join(work, "fb-same")),
+                                split="combined")
+        check(any("same card scanned over and over" in n for n in same.notes),
+              f"one card repeated has no odd side out, and should say so: {same.notes}")
+
+        # Told explicitly, the setting still wins.
+        pinned = batch.plan_scans(batch.list_images(os.path.join(work, "fb-left")),
+                                  split="combined", front="first")
+        check(all(front_taken_from(c, False) == "first" for c in pinned.cards),
+              "an explicit --front first should not be second-guessed")
+        check(not pinned.notes, "an explicit setting needs no explaining")
 
         # ---------------------------------------- cards on a white bed
         #

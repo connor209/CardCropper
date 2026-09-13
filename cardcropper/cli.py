@@ -37,9 +37,12 @@ def main():
                     help="auto = look at each scan and divide the ones holding "
                          "both faces, single = every scan is one face, combined "
                          "= every scan holds both (default: auto)")
-    ap.add_argument("--front", choices=("first", "second"), default="first",
-                    help="which half of a combined scan is the front: first is "
-                         "the left or top one (default: first)")
+    ap.add_argument("--front", choices=batch.FRONTS, default="auto",
+                    help="which half of a combined scan, or which file of a "
+                         "pair, is the front. auto reads it off the batch: every "
+                         "card has a different front and the same back, so the "
+                         "side that looks the same on every card is the back "
+                         "(default: auto)")
     ap.add_argument("--background", choices=imaging.BACKGROUNDS, default="dark",
                     help="what the cards were laid on. light is for a white "
                          "backing sheet, which is the only way a black-bordered "
@@ -61,7 +64,7 @@ def main():
     if not paths:
         sys.exit("no images found")
 
-    # Only in auto, and only worth reporting because on a cloud-synced folder
+    # Only worth reporting because on a cloud-synced folder
     # this is where the wait is: every scan has to be streamed down before
     # anything can be planned. Rewritten in place on a terminal, and left out
     # entirely when the output is a log file, where a thousand half-lines of
@@ -75,9 +78,17 @@ def main():
         if i == total:
             print("\r" + " " * 32 + "\r", end="", file=sys.stderr, flush=True)
 
-    plan = batch.plan_scans(paths, split=args.split,
-                            front_first=args.front == "first",
-                            progress=examining, background=args.background)
+    def comparing(i, total):
+        if live:
+            print(f"\rcomparing faces {i}/{total}…", end="", file=sys.stderr, flush=True)
+            if i == total:
+                print("\r" + " " * 32 + "\r", end="", file=sys.stderr, flush=True)
+
+    plan = batch.plan_scans(paths, split=args.split, front=args.front,
+                            progress=examining, faces=comparing,
+                            background=args.background)
+    for note in plan.notes:
+        print(note)
     combined = sum(1 for c in plan.cards if c.combined)
     if combined:
         print(f"{combined} of {len(plan.cards)} card(s) have both faces on one scan")
