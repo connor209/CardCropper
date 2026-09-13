@@ -532,50 +532,61 @@ def main():
               f"the two faces should come out the same size, got {back_face.size} "
               f"and {front_face.size}")
 
-        # ----------------------------- a scan with nothing to measure
+        # --------------------------------- a real scan, kept byte for byte
         #
-        # A batch arrived cropped so flush that both cards filled it edge to
-        # edge: three sides of each half are the scan's own boundary and the
-        # fourth is the seam against the next card. One edge slipped the
-        # boundary test, reported 0.23 degrees on its own, and the scan was
-        # rotated by it — putting a hard straight line of fill through every
-        # corner crop. Reading four edges exists precisely so that no single
-        # one decides.
-        FLW, FLH = 744, 1037
-        flush = Image.new("RGB", (FLW * 2, FLH), (0, 0, 0))
-        for i in range(2):
-            face = Image.new("RGB", (FLW, FLH), (150, 60, 70))
-            d = ImageDraw.Draw(face)
-            d.rectangle([30, 30, FLW - 30, FLH - 30], outline=(240, 230, 200), width=6)
-            d.rectangle([0, 0, FLW - 1, 40], fill=(90, 30, 40))
-            flush.paste(face, (i * FLW, 0))
-        flushdir = os.path.join(work, "flush")
-        os.makedirs(flushdir)
-        flush.save(os.path.join(flushdir, "0001.jpg"), quality=95)
+        # See tests/fixtures/README.md. A document scanner's duplex output with
+        # the pair filling the sheet: no bed anywhere, no gap between the cards,
+        # every face clipped on all four sides. It broke two things at once and
+        # both came out as hard straight lines through the corner crops.
+        #
+        # It is a file rather than something generated because it CANNOT be
+        # generated: re-encoding it at any quality loses the first fault, so
+        # every synthetic stand-in written for this passed on the broken code.
+        flush_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "fixtures", "flush-pair.jpg")
+        check(os.path.exists(flush_path), f"the fixture is missing: {flush_path}")
+        flush_scan = imaging.load(flush_path)
+        check(flush_scan.size == (1486, 1037),
+              f"the fixture is {flush_scan.size}, not the 1486x1037 it was measured "
+              "at — has it been re-encoded? See tests/fixtures/README.md")
 
-        halves = imaging.split_regions(imaging.load(os.path.join(flushdir, "0001.jpg")),
-                                       force=True)
-        check(len(halves) == 2, "a flush pair still divides down the middle")
+        check(imaging.split_regions(flush_scan) is None,
+              "the two cards touch, so there is no gap to divide on")
+        halves = imaging.split_regions(flush_scan, force=True)
+        check(len(halves) == 2, "a touching pair still divides down the middle")
+        ok, why = imaging.divided_ok(halves)
+        check(ok, f"the middle should land between the two cards, but: {why}")
+
         for which, half in zip(("front", "back"), halves):
             exact, padded, angle, edges = imaging.straighten(half)
+            # One edge is not a consensus. This face measures exactly one, and
+            # acting on it rotated a square card by 0.23 degrees.
             check(edges >= imaging.MIN_SKEW_EDGES or angle == 0.0,
-                  f"{which}: rotated {angle:+.2f}° on {edges} edge(s) — one edge is "
-                  "not a consensus, and the fill it brings in reads as a hard line "
-                  "through every corner crop")
-            # And nothing is invented past the edge of what was scanned.
-            check(padded.size[0] <= half.size[0] + 2
-                  and padded.size[1] <= half.size[1] + 2,
+                  f"{which}: rotated {angle:+.2f}° on {edges} edge(s) — the fill "
+                  "that brings in reads as a hard line through every corner crop")
+            # And nothing invented past the edge of what was scanned. Before,
+            # this face was padded out by 48px of black that looks like bed.
+            check(padded.size[0] <= half.size[0] and padded.size[1] <= half.size[1],
                   f"{which}: the crop area {padded.size} is bigger than the scan "
-                  f"{half.size} — that margin is padding, and it reads as bed the "
-                  "card was never photographed against")
+                  f"{half.size} — that margin is padding, and on a dark bed it "
+                  "reads as a background the card was never photographed against")
+            ratio = max(exact.size) / float(min(exact.size))
+            check(1.30 <= ratio <= 1.45,
+                  f"{which} came out {ratio:.2f}:1 at {exact.size}")
+            check(imaging.clipped_edges(half),
+                  f"{which}: this scan is cropped flush and that should be reported")
 
-        # A tiny angle is not worth a resample: interpolation softens exactly
-        # the detail these crops are cut to show.
-        check(imaging.MIN_SKEW_ANGLE > 0, "there should be a floor on rotating")
-        square = Image.new("RGB", (900, 1250), (0, 0, 0))
-        square.paste(Image.new("RGB", (700, 1000), (170, 160, 140)), (100, 120))
-        _, _, tiny, _ = imaging.straighten(square)
-        check(tiny == 0.0, f"a square card should not be rotated at all, got {tiny:+.3f}")
+        # End to end, the crops come out and nothing in them is invented.
+        flushout = os.path.join(out, "flush")
+        flushplan = batch.Plan(cards=[batch.Card(batch.Face(flush_path, 0),
+                                                 batch.Face(flush_path, 1))])
+        os.makedirs(flushout, exist_ok=True)
+        names, flushnotes = batch.process_card(flushplan.cards[0], flushout, 1)
+        check(len(names) == 4, f"expected four images, got {names}")
+        check(any("runs off" in n for n in flushnotes),
+              f"a flush-cropped scan should say so: {flushnotes}")
+        check(not any("deskewed" in n for n in flushnotes),
+              f"nothing here has two edges to deskew from: {flushnotes}")
 
         # ------------------------------ telling the front from the back
         #

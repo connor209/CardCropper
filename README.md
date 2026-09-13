@@ -325,8 +325,14 @@ or Ubuntu: `sudo apt install python3-tk`.
 python -m tests.smoke
 ```
 
-It generates scans at known angles — one card to a scan and two, plain and
-full-art — runs both sheet styles end to end, and checks the things that fail
+One real scan is kept under `tests/fixtures/`, byte for byte, because the
+failure it carries cannot be reconstructed: re-encoding it at any quality —
+even the same size at quality 95 — loses it, so every synthetic stand-in
+written for it passed on the broken code. Its provenance and the reason it must
+not be recompressed are in `tests/fixtures/README.md`.
+
+Everything else it generates: scans at known angles — one card to a scan and
+two, plain and full-art — runs both sheet styles end to end, and checks the things that fail
 silently: that the deskew recovers the angle actually applied even when dark
 artwork hides one of the edges it could have measured, that a card filling its
 whole scan is left unrotated rather than rotated by a guess, that a scan holding two cards is
