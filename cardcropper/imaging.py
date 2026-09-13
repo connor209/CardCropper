@@ -206,6 +206,29 @@ MIN_SKEW_EDGES = 2
 #: so a hundredth of a degree is not worth paying for.
 MIN_SKEW_ANGLE = 0.05
 
+#: How far a blind division may be nudged to land on the seam, in COLUMNS, and
+#: how much emptier the seam has to be than where the division would otherwise
+#: have fallen.
+#:
+#: Four, and no more. Halving a pair is only ever wrong by a column or two —
+#: rounding, and whatever one card is clipped by — so a wide search is not
+#: buying accuracy, it is buying the chance to wander. It did: at fourteen
+#: columns a scan whose second card is dark found an emptier column INSIDE that
+#: card and moved nine columns onto it, taking eight columns of the second card
+#: into the first half. The seam is next door or it is not there.
+#:
+#: Dividing a touching pair down the middle is right to within a column, and a
+#: column is what it costs: the last column of the first card arrives at the
+#: inner edge of the second half, where the edge crop magnifies it. The seam is
+#: usually visible even when it is not empty enough to have been found as a
+#: gap — measured across a batch of these, the seam column runs 0.20 to 0.49
+#: lit where the card either side of it runs 0.79 to 0.96. That is a plain
+#: local minimum; it is simply above the bar that decides where a card stops.
+#: So the middle is where to LOOK, and the emptiest column near it is where to
+#: cut.
+SEAM_SEARCH = 4
+SEAM_DROP = 0.15
+
 #: Longest edge the mask is measured on when finding the angle.
 #:
 #: The angle is measured small and applied at full size. A flatbed scan of two
@@ -735,6 +758,23 @@ def _card_shaped(m):
     return 1.15 <= max(w, h) / float(min(w, h)) <= 1.75
 
 
+def _seam_near(profile, cut):
+    """
+    The emptiest column within reach of a blind division, where one stands out.
+
+    Returns `cut` unchanged when nothing nearby is meaningfully emptier — two
+    cards can touch with no seam at all, and then the middle is the best answer
+    available and moving off it would be inventing a boundary.
+    """
+    lo = max(0, cut - SEAM_SEARCH)
+    hi = min(len(profile), cut + SEAM_SEARCH + 1)
+    if hi - lo < 3:
+        return cut
+    local = profile[lo:hi]
+    best = lo + int(np.argmin(local))
+    return best if profile[min(cut, len(profile) - 1)] - profile[best] >= SEAM_DROP else cut
+
+
 def _cut_at(im, cut, vertical):
     """The scan in two, each half keeping the bed around its own card."""
     w, h = im.size
@@ -780,9 +820,10 @@ def split_regions(im, force=False, background="dark"):
     # lands at the inner edge of the second half, where the edge crop magnifies
     # it into a visible strip of the wrong card. Cards that touch have no gap
     # to absorb a rounding error.
+    rows, cols = stats
     if (x1 - x0) >= (y1 - y0):
-        return _cut_at(im, x0 + (x1 - x0 + 1) // 2, True)
-    return _cut_at(im, y0 + (y1 - y0 + 1) // 2, False)
+        return _cut_at(im, _seam_near(cols[0], x0 + (x1 - x0 + 1) // 2), True)
+    return _cut_at(im, _seam_near(rows[0], y0 + (y1 - y0 + 1) // 2), False)
 
 
 def clipped_edges(im, tolerance=2, background="dark"):

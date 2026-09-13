@@ -576,6 +576,58 @@ def main():
             check(imaging.clipped_edges(half),
                   f"{which}: this scan is cropped flush and that should be reported")
 
+        # Where the seam is visible but not EMPTY, a blind division has to snap
+        # onto it. Measured across a batch: the seam column runs 0.20 to 0.49
+        # lit where the card either side runs 0.79 to 0.96 — a plain local
+        # minimum that is simply above the bar deciding where a card stops. The
+        # division lands a column short of it, and that column is the first
+        # card's edge.
+        # The second card is a little narrower, clipped by the edge of the
+        # sheet, which is what puts the middle of the pair off the seam. Both
+        # cards the same width and the middle lands on it by luck.
+        dim_seam = Image.new("RGB", (1484, 1000), (0, 0, 0))
+        d = ImageDraw.Draw(dim_seam)
+        d.rectangle([0, 0, 742, 1000], fill=(180, 70, 70))      # 743 wide
+        d.rectangle([744, 0, 1483, 1000], fill=(70, 70, 180))   # 740, clipped
+        # The seam itself: mostly backing, but lit along enough of its length
+        # to clear the bar that decides where a card stops — which is what the
+        # real ones do, running 0.20 to 0.49 lit. Dark enough to see, not dark
+        # enough to have been found as a gap.
+        for y in range(0, 1000):
+            d.rectangle([743, y, 743, y], fill=(180, 70, 70) if y % 5 < 2 else (2, 2, 2))
+        # PNG: a seam one column wide does not survive JPEG. The transform
+        # smears it into its neighbours until the dip is gone, and then the
+        # fixture tests nothing. Real seams are wider in the underlying scan
+        # and survive; a synthetic one has to be written losslessly to stand in
+        # for them.
+        seam_path = os.path.join(work, "dim-seam.png")
+        dim_seam.save(seam_path)
+        got = imaging.split_regions(imaging.load(seam_path), force=True)
+        opening = np.asarray(got[1].convert("RGB"))[:, 0].mean(axis=0)
+        check(opening[0] < 140,
+              f"the division did not land on the seam: the second half opens on "
+              f"{opening.round().tolist()}, which is the first card's red")
+
+        # And it may only look NEXT DOOR for that seam. A wide search finds an
+        # emptier column inside a dark second card and moves onto it, taking a
+        # slice of that card into the first half — which is the same bleed the
+        # other way round.
+        check(imaging.SEAM_SEARCH <= 6,
+              f"a {imaging.SEAM_SEARCH}-column search is wide enough to wander off "
+              "the seam and into the next card")
+        dark_second = Image.new("RGB", (1483, 1000), (0, 0, 0))
+        d = ImageDraw.Draw(dark_second)
+        d.rectangle([0, 0, 740, 1000], fill=(170, 170, 170))
+        d.rectangle([741, 0, 1482, 1000], fill=(26, 26, 26))
+        for y in range(0, 1000, 2):     # a patch inside the second card, emptier
+            d.rectangle([752, y, 760, y], fill=(4, 4, 4))
+        dark_path = os.path.join(work, "dark-second.jpg")
+        dark_second.save(dark_path, quality=95)
+        got = imaging.split_regions(imaging.load(dark_path), force=True)
+        check(abs(got[0].size[0] - 741) <= 4,
+              f"the division moved to {got[0].size[0]} where the cards meet at 741 — "
+              "it has wandered into the second card")
+
         # A seam ONE column wide is still a seam. Document-scanner pairs touch
         # along most of their length and leave a single column of backing, and
         # refusing that as too thin falls through to dividing down the middle —

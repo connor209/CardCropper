@@ -34,6 +34,13 @@ straightens, crops and files. The judgement stays with you.
    a column out on an odd width, and that column is the last column of the
    first card.
 
+   Where the seam is visible but not empty — dim enough to see, lit enough to
+   have been grown through as card — the division snaps onto it. It looks four
+   columns either side of the middle and no further: halving is only ever wrong
+   by a column or two, and a wider search finds an emptier column *inside* a
+   dark second card and moves onto that, which is the same bleed the other way
+   round.
+
    Where the cards genuinely touch, the division is halfway along the pair by width
    rather than the average of its two ends — those differ by one pixel on an
    even width, and the pixel in question is the last column of the first card.
