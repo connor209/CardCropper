@@ -27,7 +27,14 @@ straightens, crops and files. The judgement stays with you.
    do not get the card's corners — you get interior artwork, and it looks
    plausible enough to list from. Every crop is cut after a deskew.
 
-   Where the cards touch, the division is halfway along the pair by width
+   A strip of background ONE column wide counts as the seam. Cards fed through
+   a document scanner touch along most of their length and often leave exactly
+   that, and refusing it as too thin was costing the very pixel the rule was
+   meant to protect: the division fell through to halving the pair, which lands
+   a column out on an odd width, and that column is the last column of the
+   first card.
+
+   Where the cards genuinely touch, the division is halfway along the pair by width
    rather than the average of its two ends — those differ by one pixel on an
    even width, and the pixel in question is the last column of the first card.
    It lands at the inner edge of the second half, where the edge crop magnifies

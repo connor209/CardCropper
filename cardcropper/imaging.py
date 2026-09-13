@@ -675,11 +675,23 @@ def detection_ok(exact, source):
 #: Anything shorter is dust, a scanner lid edge, or the card's own interior.
 SPLIT_MIN_SPAN = 0.15
 
-#: And how wide the background strip between them must be, as a fraction of the
-#: axis. Two cards laid down by hand never touch along their whole length; a
-#: few pixels of bed is all this needs, and asking for more would refuse the
-#: scans where they were laid close.
-SPLIT_MIN_GAP = 0.003
+#: And how wide the background strip between them must be, in COLUMNS. One is
+#: enough, and one is what a lot of scans give: cards fed through a document
+#: scanner touch along most of their length and leave a single column of
+#: backing between them.
+#:
+#: Asking for more was costing exactly the pixel it was meant to protect. A
+#: seam too narrow to accept falls through to dividing the pair down the
+#: middle, that lands a column out whenever the content width is odd, and the
+#: column it lands out by is the last column of the first card — which arrives
+#: at the inner edge of the second half and is magnified by the edge crop. The
+#: seam was right there in the scan, one column wide, being refused for being
+#: thin.
+#:
+#: It is safe to be this permissive because a column only breaks a run when it
+#: is neither certainly card nor plausibly card (see `_card_runs`), and because
+#: both halves still have to come out card-shaped afterwards.
+SPLIT_MIN_GAP = 1
 
 #: Longest edge a scan is decoded to when `probe` is only deciding how many
 #: cards are on it. Full-resolution decoding of a folder of scans to plan the
@@ -706,7 +718,7 @@ def _division(m, axis, stats=None):
             if r[1] - r[0] + 1 >= n * SPLIT_MIN_SPAN]
     if len(runs) != 2:
         return None
-    if runs[1][0] - runs[0][1] - 1 < max(2, n * SPLIT_MIN_GAP):
+    if runs[1][0] - runs[0][1] - 1 < SPLIT_MIN_GAP:
         return None
     return (runs[0][1] + runs[1][0]) // 2
 

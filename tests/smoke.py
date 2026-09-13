@@ -576,6 +576,26 @@ def main():
             check(imaging.clipped_edges(half),
                   f"{which}: this scan is cropped flush and that should be reported")
 
+        # A seam ONE column wide is still a seam. Document-scanner pairs touch
+        # along most of their length and leave a single column of backing, and
+        # refusing that as too thin falls through to dividing down the middle —
+        # which lands a column out whenever the content width is odd, and the
+        # column it lands out by is the last column of the first card.
+        for seam in (1, 2, 6):
+            pair = Image.new("RGB", (740 * 2 + seam, 1000), (0, 0, 0))
+            pair.paste(Image.new("RGB", (740, 1000), (190, 60, 60)), (0, 0))
+            pair.paste(Image.new("RGB", (740, 1000), (60, 60, 190)), (740 + seam, 0))
+            got = imaging.split_regions(pair)
+            check(got is not None,
+                  f"a {seam}-column seam between two cards should be found")
+            check(abs(got[0].size[0] - (740 + seam // 2)) <= 1,
+                  f"a {seam}-column seam divided at {got[0].size[0]}, not in its "
+                  f"middle at {740 + seam // 2}")
+            opening = np.asarray(got[1].convert("RGB"))[:, 0].mean(axis=0)
+            check(opening[0] < 120,
+                  f"with a {seam}-column seam the second half opens on a red column "
+                  f"from the first card: {opening.round().tolist()}")
+
         # The same arithmetic stated plainly, at three widths: halfway along
         # the content by WIDTH, not the average of its two ends. Those differ
         # by one whenever the width is even, which is most of the time.
