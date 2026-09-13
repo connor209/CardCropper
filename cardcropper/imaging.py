@@ -448,6 +448,28 @@ def load(path):
     return im.convert("RGB")
 
 
+def _expand_to(box, reference, bounds):
+    """
+    Grow a card's box out to a size known from elsewhere, about its own centre.
+
+    Only ever GROWS, and only as far as the scan actually goes. Detection
+    under-reports and never over-reports: dark artwork reads as bed, so a box
+    smaller than the card is missing edges, while a box the right size is not
+    hiding anything. Centred because what a dark back does leave visible — an
+    inset frame line, a foil panel — is printed concentric with the card.
+    """
+    x0, y0, x1, y1 = box
+    want_w, want_h = reference
+    if want_w > x1 - x0 + 1:
+        middle = (x0 + x1) / 2.0
+        x0, x1 = round(middle - want_w / 2.0), round(middle + want_w / 2.0)
+    if want_h > y1 - y0 + 1:
+        middle = (y0 + y1) / 2.0
+        y0, y1 = round(middle - want_h / 2.0), round(middle + want_h / 2.0)
+    w, h = bounds
+    return max(0, x0), max(0, y0), min(w - 1, x1), min(h - 1, y1)
+
+
 def _small(im, longest=SKEW_SIZE):
     """A copy no bigger than `longest` on its long edge — see SKEW_SIZE."""
     if max(im.size) <= longest:
@@ -457,9 +479,14 @@ def _small(im, longest=SKEW_SIZE):
                      Image.BILINEAR)
 
 
-def straighten(im):
+def straighten(im, reference=None):
     """
     Deskew and crop to the card, at the scan's OWN resolution.
+
+    `reference` is a (width, height) the card is known to be from somewhere
+    other than this image — in practice from its other face, which is the same
+    piece of card. A box smaller than that is grown out to it. See
+    `_expand_to`, and `batch._match_sizes` for where the size comes from.
 
     Returns (exact, padded, angle, edges) — the card cropped flush, the same
     card with CROP_MARGIN of background kept around it for the crops to be cut
@@ -477,6 +504,8 @@ def straighten(im):
     box = _card_box(_mask(rotated))
     if box is None:
         return rotated, rotated, angle, len(measured)
+    if reference:
+        box = _expand_to(box, reference, rotated.size)
     x0, y0, x1, y1 = box
     exact = rotated.crop((x0, y0, x1 + 1, y1 + 1))
     m = round(CROP_MARGIN * exact.size[0] / CARD_W)

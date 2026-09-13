@@ -116,6 +116,27 @@ Double-click `CardCropper.bat` (or `CardCropper.exe`).
    The app refuses that rather than letting it happen quietly.
 4. **Crop cards.**
 
+### Backs too dark to find their own edge
+
+Some backs are printed in a black that measures **0** against a scanner bed of
+0 — a Lorcana back does. The card's border and the bed are not merely similar,
+they are the same number, and no threshold can separate them. What the detector
+finds instead is the frame line printed a few millimetres in, so the corner
+crops come out showing the corners of that frame rather than the corners of the
+card. On a real scan the back detected as 693×987 where the front of the same
+card came out 746×1011.
+
+A card's two faces are the same piece of card at the same resolution, so the
+face that *does* detect knows the size the other should have been. The smaller
+one is grown out to the larger, about its own centre — which is where the
+visible frame is printed — and never past the edge of the scan. The log says
+when it happens and what the two measurements were.
+
+This recovers the card's real extent. It cannot recover its *outline*: a black
+border against a black bed has nothing to see, whatever the crop is cut to. If
+you need the silhouette on backs like these, the bed has to be lighter than the
+card.
+
 ### Scan a little wider than the card
 
 A scanner set to crop to the card takes the background with it, and the

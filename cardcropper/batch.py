@@ -336,6 +336,43 @@ def next_index(out_dir):
     return highest + 1
 
 
+#: How far the two faces of one card may disagree in size before the smaller
+#: one is taken to have mis-detected. A percent or two is the deskew and the
+#: rounding; fifty pixels is a missed edge.
+SIZE_TOLERANCE = 0.03
+
+
+def _match_sizes(scans, faces, notes):
+    """
+    Make a card's two faces the same size, because they are the same card.
+
+    Detection only ever under-reports, and on some backs it cannot do better:
+    a Lorcana back is printed in a black that measures 0 against a scanner bed
+    of 0, so the card's own border and the bed are not merely similar, they are
+    the same number. Nothing separates them. What the detector finds instead is
+    the gold frame line inset a few millimetres, and the crops then show the
+    corners of that frame rather than the corners of the card.
+
+    The front of the same card has artwork to its edge and detects cleanly, and
+    it is the same piece of card at the same resolution — so it knows the size
+    the back should have been. The smaller face is grown out to the larger,
+    which can only ever add back edges that were trimmed, never invent a card
+    bigger than the scan.
+    """
+    sizes = {face: faces[face][0].size for face in ("front", "back")}
+    for face, other in (("front", "back"), ("back", "front")):
+        small, large = sizes[face], sizes[other]
+        if all(s >= l * (1 - SIZE_TOLERANCE) for s, l in zip(small, large)):
+            continue
+        exact, padded, angle, edges = imaging.straighten(scans[face], reference=large)
+        notes.append(
+            f"{face}: detected {small[0]}x{small[1]} against the {other}'s "
+            f"{large[0]}x{large[1]} — too dark to find its own edge, so it was "
+            f"cut to the {other}'s size ({exact.size[0]}x{exact.size[1]})")
+        faces[face] = (exact, padded)
+    return faces
+
+
 def process_card(card, out_dir, index, naming="grouped", order="crops-last",
                  style="grading", copy_originals=True, quality=95):
     """
@@ -384,6 +421,8 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
         elif abs(angle) >= 0.05:
             notes.append(f"{face}: deskewed {angle:+.2f}°"
                          + (f" (from {edges} edge)" if edges == 1 else ""))
+
+    _match_sizes(scans, faces, notes)
 
     draw = imaging.STYLES[style]
     for face in ("front", "back"):

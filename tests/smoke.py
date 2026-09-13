@@ -459,6 +459,65 @@ def main():
         check(not imaging.clipped_edges(bedded),
               "a card with bed all round it is not clipped")
 
+        # ------------------------------- a back too dark to find its edge
+        #
+        # A Lorcana back is printed in a black that measures 0 against a
+        # scanner bed of 0. The card's own border and the bed are not merely
+        # similar, they are the same number, and no threshold separates them.
+        # What the detector finds instead is the frame line inset a few
+        # millimetres, so the crops show the corners of the frame rather than
+        # the corners of the card: a real scan detected the back at 693x987
+        # where the front of the same card came out 746x1011.
+        BW, BH, INSET = 740, 1030, 22
+        blind = Image.new("RGB", (BW * 2 + 120, BH + 120), (0, 0, 0))
+        lit_front = Image.new("RGB", (BW, BH), (90, 120, 150))
+        ImageDraw.Draw(lit_front).rectangle([0, int(BH * .6), BW, BH], fill=(40, 30, 60))
+        blind.paste(lit_front, (40, 40))
+        # the back: pure black to its edge, with only an inset frame visible
+        black_back = Image.new("RGB", (BW, BH), (0, 0, 0))
+        ImageDraw.Draw(black_back).rectangle(
+            [INSET, INSET, BW - INSET, BH - INSET], outline=(150, 130, 90), width=5)
+        blind.paste(black_back, (40 + BW + 40, 40))
+        blinddir = os.path.join(work, "blind")
+        os.makedirs(blinddir)
+        blind.save(os.path.join(blinddir, "0001.jpg"), quality=95)
+
+        halves = imaging.split_regions(imaging.load(os.path.join(blinddir, "0001.jpg")))
+        check(halves is not None, "the two cards have bed between them and should divide")
+        loose = imaging.straighten(halves[1])[0]
+        check(loose.size[0] < BW * 0.95,
+              f"the back should detect SHORT on its own ({loose.size}) — if it does "
+              "not, this fixture no longer reproduces the problem it guards")
+
+        # Given the front's size, the back is cut to it instead.
+        front_exact = imaging.straighten(halves[0])[0]
+        tight = imaging.straighten(halves[1], reference=front_exact.size)[0]
+        check(tight.size[0] >= front_exact.size[0] * 0.97
+              and tight.size[1] >= front_exact.size[1] * 0.97,
+              f"the back came out {tight.size} against the front's {front_exact.size}")
+
+        # It may only ever grow, and only as far as the scan goes.
+        grown = imaging._expand_to((10, 10, 50, 50), (500, 500), (100, 100))
+        check(grown == (0, 0, 99, 99),
+              f"expansion must stop at the edge of the scan, got {grown}")
+        same = imaging._expand_to((10, 10, 90, 90), (20, 20), (200, 200))
+        check(same == (10, 10, 90, 90),
+              f"a box already bigger than the reference is left alone, got {same}")
+
+        # And the whole thing end to end: the note names what happened.
+        blindout = os.path.join(out, "blind")
+        blindplan = batch.plan_scans(batch.list_images(blinddir), split="combined")
+        os.makedirs(blindout, exist_ok=True)
+        _, blindnotes = batch.process_card(blindplan.cards[0], blindout, 1)
+        check(any("too dark to find its own edge" in n for n in blindnotes),
+              f"the borrowed size should be reported, got {blindnotes}")
+        back_face = imaging.load(os.path.join(blindout, "0001_2_back.jpg"))
+        front_face = imaging.load(os.path.join(blindout, "0001_1_front.jpg"))
+        check(abs(back_face.size[0] - front_face.size[0]) <= 8
+              and abs(back_face.size[1] - front_face.size[1]) <= 8,
+              f"the two faces should come out the same size, got {back_face.size} "
+              f"and {front_face.size}")
+
         # ------------------------------------------------ a dark border
         #
         # The angle has to come from the card, not from whichever edge the
