@@ -22,10 +22,21 @@ straightens, crops and files. The judgement stays with you.
    "corners" that are the outer corners of the *pair* — two real, two interior
    artwork. It looks like a working run. The gap is the thing that tells them
    apart, so the gap is what is looked for.
-2. **Deskews it.** Cards sit half a degree off in a sheet feeder. Crop the
-   bounding box of a tilted card and take its corners and you do not get the
-   card's corners — you get interior artwork, and it looks plausible enough to
-   list from. Every crop is cut after a deskew.
+2. **Deskews it, from all four edges.** Cards sit half a degree off in a sheet
+   feeder. Crop the bounding box of a tilted card and take its corners and you
+   do not get the card's corners — you get interior artwork, and it looks
+   plausible enough to list from. Every crop is cut after a deskew.
+
+   The angle is the one most of each edge agrees on, taken across all four
+   edges, rather than a line fitted through the left edge alone. On a full-art
+   card the artwork is often as dark as the scanner bed and runs right to the
+   border, so the detector cannot see the edge there and reads the first lit
+   pixel *inside* the card instead. Those readings all sit on one side of the
+   truth, and a straight-line fit through them is dragged a long way — a card
+   sitting square measured 22 degrees off, and every crop was then cut from a
+   scan rotated by that. No single edge can claim more than 8 degrees, an edge
+   lying on the image boundary does not get a vote, and where no edge can be
+   measured the scan is left alone and the log says so.
 3. **Finds the card on the bed** on the value channel — `max(R,G,B)` — rather
    than on brightness. A Pokémon back's navy border is as dark as the scanner
    bed by luminance, so a brightness mask finds the card's bright *interior*
@@ -100,7 +111,7 @@ combined scan run as a single card looks wrong until you open the crops.
 |---|---|
 | **Detect** | The default, and right for a mixed folder. Each file is examined once as it is added; the answer is remembered, so changing the other settings is instant. |
 | **One face per file** | A folder you already know is front, back, front, back. Nothing is examined, so adding a folder of several hundred from a cloud-synced drive is immediate. A scan that looks like it holds two cards is still called out in the log. |
-| **Both faces on every scan** | Every file holds a pair — including cards laid *touching*, where there is no strip of bed to find and the app will not divide on a guess of its own. Here it divides down the middle of what it found and says so in the log. |
+| **Both faces on every scan** | Every file holds a pair — including cards laid *touching*, where there is no strip of bed to find and the app will not divide on a guess of its own. Here it divides down the middle of what it found, which is the seam whenever both halves are the same card, and checks that two card-shaped halves came out of it. It only says anything if they did not. |
 
 **Front is the left / top one** says which half of a combined scan leads. The
 app does not try to work this out from the pixels: the honest signal — that
@@ -203,9 +214,11 @@ or Ubuntu: `sudo apt install python3-tk`.
 python -m tests.smoke
 ```
 
-It generates scans at known angles — one card to a scan and two — runs both
-sheet styles end to end, and checks the things that fail silently: that the
-deskew recovers the angle actually applied, that a scan holding two cards is
+It generates scans at known angles — one card to a scan and two, plain and
+full-art — runs both sheet styles end to end, and checks the things that fail
+silently: that the deskew recovers the angle actually applied even when dark
+artwork hides one of the edges it could have measured, that a card filling its
+whole scan is left unrotated rather than rotated by a guess, that a scan holding two cards is
 divided and one holding a single card is not, that the two halves add back up
 to the whole scan so nothing of either card was cut away, that the two faces
 written out are actually different rather than one half twice, that an odd scan

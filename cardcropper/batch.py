@@ -286,9 +286,15 @@ def _scans_of(card, notes):
     source = _io(imaging.load, card.front.path)
     regions = imaging.split_regions(source)
     if regions is None:
+        # The cards were laid touching, so there is no strip of bed to cut on.
+        # Dividing at the middle is right whenever both halves are the same
+        # card, which is every trading card — so check that it came out as two
+        # cards rather than warning simply because the gap was missing.
         regions = imaging.split_regions(source, force=True)
-        notes.append("no gap found between the two cards — divided down the "
-                     "middle; check the crops")
+        ok, why = imaging.divided_ok(regions)
+        if not ok:
+            notes.append(f"the two cards are touching and dividing down the "
+                         f"middle did not come out right — {why}; check the crops")
     return {"front": regions[card.front.side], "back": regions[card.back.side]}
 
 
@@ -352,7 +358,7 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
 
     for face in ("front", "back"):
         source = scans[face]
-        exact, padded, angle = imaging.straighten(source)
+        exact, padded, angle, edges = imaging.straighten(source)
         ok, why = imaging.detection_ok(exact, source)
         if not ok:
             notes.append(f"{face}: {why}")
@@ -363,8 +369,15 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
             notes.append(f"{face}: this scan looks like it holds two cards — "
                          "try the combined setting")
         faces[face] = (exact, padded)
-        if abs(angle) >= 0.05:
-            notes.append(f"{face}: deskewed {angle:+.2f}°")
+        if not edges:
+            # Said out loud because the alternative reads as a broken deskew:
+            # a visibly crooked card that came out just as crooked, with
+            # nothing in the log between the two.
+            notes.append(f"{face}: could not measure the angle from any edge — "
+                         "left unrotated")
+        elif abs(angle) >= 0.05:
+            notes.append(f"{face}: deskewed {angle:+.2f}°"
+                         + (f" (from {edges} edge)" if edges == 1 else ""))
 
     draw = imaging.STYLES[style]
     for face in ("front", "back"):

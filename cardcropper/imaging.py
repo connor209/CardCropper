@@ -93,6 +93,45 @@ TILE_BG = (32, 32, 32)
 LABEL = (255, 224, 66)
 TITLE = (245, 245, 245)
 
+#: How far off square a scanned card plausibly is.
+#:
+#: A sheet feeder leaves 0.3-0.6 degrees and a card laid on a flatbed by hand a
+#: couple more. Nothing here is a limit on what a scanner produces — it is a
+#: limit on what a MEASUREMENT is allowed to claim, so that an edge the
+#: detector could not actually see cannot come back as a confident 22 degrees
+#: and rotate a square card into a wonky one. Past this the card is left as it
+#: is and the log says so.
+MAX_SKEW = 8.0
+_MAX_SLOPE = math.tan(math.radians(MAX_SKEW))
+
+#: How many lit pixels in a row mark the card's edge. One is JPEG noise.
+EDGE_RUN = 5
+
+#: How much of each end of an edge is ignored — the rounded corners.
+ENDS_SKIP = 0.18
+
+#: How far off a line a row may sit and still count as agreeing with it, and
+#: how much of the edge has to agree before the line is believed at all.
+EDGE_TOLERANCE = 2.0
+EDGE_AGREEMENT = 0.35
+
+#: Fewest rows an edge needs before its angle means anything.
+MIN_EDGE_POINTS = 20
+
+#: How much of an edge may lie on the image boundary before the edge is thrown
+#: away as not being the card's: a card running off the scan, or the cut side
+#: of a scan that was divided down the middle.
+CLIPPED_EDGE = 0.2
+
+#: Longest edge the mask is measured on when finding the angle.
+#:
+#: The angle is measured small and applied at full size. A flatbed scan of two
+#: cards runs to 16 megapixels and the edge search over four sides of it costs
+#: more than every crop taken afterwards, for precision nobody can use: one
+#: pixel of quantisation over a thousand rows is 0.06 degrees, and the rotation
+#: itself still happens at the scan's own resolution.
+SKEW_SIZE = 1600
+
 #: Image files the app will pick up.
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp")
 
@@ -145,40 +184,123 @@ def _card_box(m):
     return int(xs[0]), int(ys[0]), int(xs[-1]), int(ys[-1])
 
 
-def _left_edge(m, y, run=5):
-    """First x where the card actually starts: a run of lit pixels, not one."""
-    lit = m[y]
-    idx = np.where(lit)[0]
-    for x in idx:
-        if x + run < len(lit) and lit[x:x + run].all():
-            return int(x)
-    return None
+def _edge_profile(m):
+    """
+    Where the card's left edge sits on each row, over the straight middle of it.
+
+    Returns (rows, xs). A run of EDGE_RUN lit pixels marks the edge rather than
+    a single one, or JPEG noise in the bed is read as the card. The top and
+    bottom ENDS_SKIP of the card are left out: those are the rounded corners,
+    and including them drags any fit toward zero — the failure that makes a
+    deskew look like it ran while leaving the corners unusable.
+    """
+    rows = np.where(m.mean(axis=1) > 0.4)[0]
+    if len(rows) < 100:
+        return None, None
+    y0, y1 = int(rows[0]), int(rows[-1])
+    skip = int((y1 - y0) * ENDS_SKIP)
+    band = m[y0 + skip:y1 - skip]
+    if band.shape[0] < MIN_EDGE_POINTS:
+        return None, None
+    # A pixel starts a run when it and the next EDGE_RUN-1 are all lit. Done
+    # across the whole band at once: a per-row Python loop over four edges of a
+    # 40-megapixel scan costs more than everything else in the pipeline.
+    runs = band.copy()
+    for k in range(1, EDGE_RUN):
+        runs[:, :-k] &= band[:, k:]
+    runs[:, -EDGE_RUN:] = False
+    found = runs.any(axis=1)
+    if found.sum() < MIN_EDGE_POINTS:
+        return None, None
+    ys = (np.arange(band.shape[0])[found] + y0 + skip).astype(float)
+    return ys, runs.argmax(axis=1)[found].astype(float)
+
+
+def _consensus_slope(ys, xs):
+    """
+    The slope most of an edge agrees on, ignoring the part that does not.
+
+    A straight-line fit is the obvious thing and is what got this wrong. Where
+    dark artwork reaches the card's border — a full-art card, a black cloak
+    against the edge — the detector cannot see the border there and reports the
+    first lit pixel INSIDE the card instead. Those points are all on one side
+    of the truth and they drag a least-squares fit a long way: a card sitting
+    square measured +22 degrees, and the crops were cut from a scan rotated by
+    that, which looks wonky rather than wrong and passes every other check.
+
+    So the line is chosen by how many rows agree with it, not by the average of
+    all of them. Candidate lines steeper than MAX_SKEW are not considered at
+    all — a card on a flatbed is off by a fraction of a degree, and treating a
+    30-degree "edge" as a serious candidate is how the bad fit won.
+    """
+    n = len(ys)
+    step = max(1, n // 60)
+    best = None
+    for i in range(0, n, step):
+        for j in range(i + step, n, step):
+            if ys[j] == ys[i]:
+                continue
+            slope = (xs[j] - xs[i]) / (ys[j] - ys[i])
+            if abs(slope) > _MAX_SLOPE:
+                continue
+            agree = np.abs(xs - (slope * ys + (xs[i] - slope * ys[i]))) <= EDGE_TOLERANCE
+            if best is None or agree.sum() > best[0]:
+                best = (int(agree.sum()), agree)
+    if best is None or best[0] < max(MIN_EDGE_POINTS, EDGE_AGREEMENT * n):
+        return None
+    return float(np.polyfit(ys[best[1]], xs[best[1]], 1)[0])
+
+
+def _side_degrees(m):
+    """One edge's angle, or None where that edge cannot be trusted."""
+    ys, xs = _edge_profile(m)
+    if ys is None:
+        return None
+    # An edge lying on the image boundary is not the card's edge: the card runs
+    # off the scan, or this is the cut side of a scan divided down the middle.
+    # It is a perfectly straight line at zero degrees and would vote for zero.
+    if (xs <= 0).mean() > CLIPPED_EDGE:
+        return None
+    slope = _consensus_slope(ys, xs)
+    if slope is None:
+        return None
+    angle = math.degrees(math.atan(slope))
+    return None if abs(angle) > MAX_SKEW else angle
+
+
+#: Each edge seen as a left edge, and the sign that puts its angle back into
+#: the left edge's convention.
+_SIDES = (("left", lambda m: m, 1),
+          ("right", lambda m: m[:, ::-1], -1),
+          ("top", lambda m: m.T, -1),
+          ("bottom", lambda m: m.T[:, ::-1], 1))
+
+
+def skew_sides(m):
+    """Every edge's angle, None where it could not be measured."""
+    out = {}
+    for name, view, sign in _SIDES:
+        angle = _side_degrees(view(m))
+        out[name] = None if angle is None else sign * angle
+    return out
 
 
 def _skew_degrees(m):
     """
-    Angle of the card's left edge, from a line fit over the straight middle of
-    it. The rounded corners are excluded (the top and bottom 18%) or they drag
-    the fit toward zero — which is exactly the failure that makes a deskew look
-    like it ran while leaving the corners unusable.
+    How far the card is off square, from all four of its edges.
+
+    The MEDIAN of the edges that could be measured, not the left edge alone.
+    All four carry the same angle, so the median costs nothing when they agree
+    and is what saves the result when one of them is wrong — and one of them
+    being wrong is the normal case, not the exotic one: artwork reaching the
+    border ruins whichever edge it touches, and a scan divided down the middle
+    has a cut side that is not a card edge at all.
+
+    Zero when no edge could be measured. Leaving a scan unrotated is a visible,
+    recoverable outcome; rotating it by a confident wrong angle is not.
     """
-    box = _card_box(m)
-    if box is None:
-        return 0.0
-    _, y0, _, y1 = box
-    height = y1 - y0
-    if height < 100:
-        return 0.0
-    ys, xs = [], []
-    for y in range(y0 + int(height * 0.18), y1 - int(height * 0.18)):
-        x = _left_edge(m, y)
-        if x is not None:
-            ys.append(y)
-            xs.append(x)
-    if len(ys) < 20:
-        return 0.0
-    slope = np.polyfit(ys, xs, 1)[0]
-    return math.degrees(math.atan(slope))
+    found = [a for a in skew_sides(m).values() if a is not None]
+    return float(np.median(found)) if found else 0.0
 
 
 def load(path):
@@ -188,26 +310,40 @@ def load(path):
     return im.convert("RGB")
 
 
+def _small(im, longest=SKEW_SIZE):
+    """A copy no bigger than `longest` on its long edge — see SKEW_SIZE."""
+    if max(im.size) <= longest:
+        return im
+    k = longest / float(max(im.size))
+    return im.resize((max(1, round(im.size[0] * k)), max(1, round(im.size[1] * k))),
+                     Image.BILINEAR)
+
+
 def straighten(im):
     """
     Deskew and crop to the card, at the scan's OWN resolution.
 
-    Returns (exact, padded, angle) — the card cropped flush, and the same card
-    with CROP_MARGIN of background kept around it for the crops to be cut from.
+    Returns (exact, padded, angle, edges) — the card cropped flush, the same
+    card with CROP_MARGIN of background kept around it for the crops to be cut
+    from, and how many of the card's four edges the angle was agreed on by.
+    Zero edges means the angle could not be measured and the scan was left as
+    it is, which is worth saying out loud: a card that is visibly crooked and
+    was not straightened otherwise looks like the deskew is broken.
     Normalising to a fixed size here would put a resample between the scan and
     every crop taken from it, and each interpolation costs a little edge
     definition on exactly the fine detail the crop exists to show.
     """
-    angle = _skew_degrees(_mask(im))
+    measured = [a for a in skew_sides(_mask(_small(im))).values() if a is not None]
+    angle = float(np.median(measured)) if measured else 0.0
     rotated = im.rotate(-angle, resample=Image.BICUBIC, expand=True, fillcolor=(0, 0, 0))
     box = _card_box(_mask(rotated))
     if box is None:
-        return rotated, rotated, angle
+        return rotated, rotated, angle, len(measured)
     x0, y0, x1, y1 = box
     exact = rotated.crop((x0, y0, x1 + 1, y1 + 1))
     m = round(CROP_MARGIN * exact.size[0] / CARD_W)
     padded = rotated.crop((x0 - m, y0 - m, x1 + 1 + m, y1 + 1 + m))
-    return exact, padded, angle
+    return exact, padded, angle, len(measured)
 
 
 def detection_ok(exact, source):
@@ -353,6 +489,23 @@ def split_regions(im, force=False):
     if (x1 - x0) >= (y1 - y0):
         return _cut_at(im, (x0 + x1) // 2, True)
     return _cut_at(im, (y0 + y1) // 2, False)
+
+
+def divided_ok(regions):
+    """
+    Whether a scan divided WITHOUT a gap to go on came out as two cards.
+
+    Dividing at the middle of the detected content is a guess, but not a wild
+    one: both halves of a combined scan are the same card, so the middle is the
+    seam whenever the cards are the same size — which trading cards are. Rather
+    than warn every time the guess is made, check it: two card-shaped halves
+    mean it landed, and only a half that is not card-shaped is worth saying
+    anything about.
+    """
+    for i, region in enumerate(regions, 1):
+        if not _card_shaped(_mask(region)):
+            return False, f"half {i} of {len(regions)} is not card-shaped"
+    return True, ""
 
 
 def probe(path):

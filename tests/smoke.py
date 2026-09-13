@@ -39,6 +39,26 @@ def make_scan(path, front, angle):
     bed.rotate(angle, resample=Image.BICUBIC, fillcolor=(0, 0, 0)).save(path, quality=95)
 
 
+def make_full_art(dark_border=True):
+    """
+    A full-art card whose near-black artwork reaches the outer border.
+
+    This is the card that broke the deskew: where the artwork is as dark as the
+    scanner bed, the edge detector cannot see the border and reports the first
+    lit pixel INSIDE the card instead. Those readings are all on one side of
+    the truth, so a straight-line fit through them is dragged a long way — a
+    square card measured +22 degrees and every crop was cut from a scan rotated
+    by that.
+    """
+    W, H = 1000, 1400
+    card = Image.new("RGB", (W, H), (198, 163, 74))
+    d = ImageDraw.Draw(card)
+    d.rectangle([14, 14, W - 14, H - 14], fill=(150, 60, 40))
+    if dark_border:
+        d.polygon([(0, int(H * 0.45)), (int(W * 0.5), H), (0, H)], fill=(5, 5, 7))
+    return card
+
+
 def make_combined(path, angle, gap=60, stacked=False, flipped=False):
     """
     A scan with BOTH faces on one bed, the way a flatbed gives them: card down,
@@ -119,7 +139,7 @@ def main():
         # below it is of interior artwork rather than the card's corner.
         for i, angle in enumerate(angles, 1):
             im = imaging.load(os.path.join(scans, f"{i:04d}.jpg"))
-            _, _, found = imaging.straighten(im)
+            _, _, found, _ = imaging.straighten(im)
             check(abs(found - angle) < 0.15,
                   f"deskew found {found:+.2f}° where {angle:+.2f}° was applied")
 
@@ -254,6 +274,18 @@ def main():
               "two touching cards have no gap and must not be divided on a guess")
         check(len(imaging.split_regions(im, force=True)) == 2,
               "force should divide a scan with no gap")
+        ok, why = imaging.divided_ok(imaging.split_regions(im, force=True))
+        check(ok, f"two equal cards divide at the middle cleanly, but: {why}")
+
+        # Touching cards are the normal case for a flatbed, so they must not
+        # produce a warning simply for having no gap — only a division that
+        # actually came out wrong is worth saying anything about.
+        touching_plan = batch.plan_scans(batch.list_images(touching), split="combined")
+        touching_out = os.path.join(out, "touching")
+        os.makedirs(touching_out, exist_ok=True)
+        _, notes = batch.process_card(touching_plan.cards[0], touching_out, 1)
+        check(not [n for n in notes if "touching" in n or "did not come out" in n],
+              f"a clean division of touching cards should be quiet: {notes}")
 
         # End to end: four files per combined card, the front leading, and the
         # two faces actually different — the check that catches a division that
@@ -290,6 +322,60 @@ def main():
         _, notes = batch.process_card(as_single.cards[0], warned, 1)
         check(any("two cards" in n for n in notes),
               f"no warning that the scan holds two cards: {notes}")
+
+        # ------------------------------------------------ a dark border
+        #
+        # The angle has to come from the card, not from whichever edge the
+        # artwork happens to leave visible.
+        art = os.path.join(work, "fullart")
+        os.makedirs(art)
+        for applied in (0.0, 0.6, -1.5, 3.0):
+            bed = Image.new("RGB", (1400, 1800), (0, 0, 0))
+            bed.paste(make_full_art(), (200, 200))
+            path = os.path.join(art, f"{applied:+.1f}.jpg")
+            bed.rotate(applied, resample=Image.BICUBIC, fillcolor=(0, 0, 0))\
+               .save(path, quality=95)
+            _, _, found, edges = imaging.straighten(imaging.load(path))
+            check(abs(found - applied) < 0.2,
+                  f"dark border at {applied:+.2f}°: deskew found {found:+.2f}° "
+                  f"from {edges} edge(s)")
+
+        # No edge may claim more than MAX_SKEW on its own, however straight a
+        # line the artwork happens to make.
+        m = imaging._mask(imaging.load(os.path.join(art, "+0.0.jpg")))
+        for side, angle in imaging.skew_sides(m).items():
+            check(angle is None or abs(angle) <= imaging.MAX_SKEW,
+                  f"{side} edge claimed {angle:+.2f}°, past the {imaging.MAX_SKEW}° limit")
+
+        # An edge lying on the image boundary is not a card edge and must not
+        # vote: it is a perfectly straight line at zero, and on a scan divided
+        # down the middle the cut side is exactly that.
+        flush = Image.new("RGB", (1000, 1400), (0, 0, 0))
+        flush.paste(make_full_art(dark_border=False).resize((1000, 1400)), (0, 0))
+        sides = imaging.skew_sides(imaging._mask(flush))
+        check(all(a is None for a in sides.values()),
+              f"a card filling the whole scan has no measurable edge: {sides}")
+        _, _, found, edges = imaging.straighten(flush)
+        check(found == 0.0 and edges == 0,
+              f"nothing measurable should leave the scan unrotated, got {found:+.2f}°")
+
+        # A scan divided down the middle still deskews from its real edges.
+        touching = os.path.join(work, "touching-art")
+        os.makedirs(touching)
+        for applied in (0.0, 0.5):
+            pair = Image.new("RGB", (2000 + 120, 1400 + 120), (0, 0, 0))
+            pair.paste(make_full_art(), (60, 60))
+            pair.paste(make_card(front=False), (60 + 1000, 60))
+            path = os.path.join(touching, f"{applied:+.1f}.jpg")
+            pair.rotate(applied, resample=Image.BICUBIC, fillcolor=(0, 0, 0))\
+                .save(path, quality=95)
+            halves = imaging.split_regions(imaging.load(path), force=True)
+            check(len(halves) == 2, "touching cards should still divide when forced")
+            for which, half in zip(("front", "back"), halves):
+                _, _, found, _ = imaging.straighten(half)
+                check(abs(found - applied) < 0.25,
+                      f"touching pair at {applied:+.2f}°: {which} half deskewed "
+                      f"{found:+.2f}°")
 
         # ------------------------------------------- carrying on a folder
         #
