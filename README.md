@@ -27,6 +27,13 @@ straightens, crops and files. The judgement stays with you.
    do not get the card's corners — you get interior artwork, and it looks
    plausible enough to list from. Every crop is cut after a deskew.
 
+   Where the cards touch, the division is halfway along the pair by width
+   rather than the average of its two ends — those differ by one pixel on an
+   even width, and the pixel in question is the last column of the first card.
+   It lands at the inner edge of the second half, where the edge crop magnifies
+   it into a visible strip of the wrong card. A gap between the cards would
+   absorb that; touching cards have none.
+
    The angle is the one most of each edge agrees on, taken across all four
    edges, rather than a line fitted through the left edge alone. On a full-art
    card the artwork is often as dark as the scanner bed and runs right to the
@@ -247,7 +254,7 @@ combined scan run as a single card looks wrong until you open the crops.
 |---|---|
 | **Detect** | The default, and right for a mixed folder. Each file is examined once as it is added; the answer is remembered, so changing the other settings is instant. |
 | **One face per file** | A folder you already know is front, back, front, back. Nothing is examined, so adding a folder of several hundred from a cloud-synced drive is immediate. A scan that looks like it holds two cards is still called out in the log. |
-| **Both faces on every scan** | Every file holds a pair — including cards laid *touching*, where there is no strip of bed to find and the app will not divide on a guess of its own. Here it divides down the middle of what it found, which is the seam whenever both halves are the same card, and checks that two card-shaped halves came out of it. It only says anything if they did not. |
+| **Both faces on every scan** | Every file holds a pair — including cards laid *touching*, where there is no strip of bed to find and the app will not divide on a guess of its own. Here it divides halfway along what it found by WIDTH, which is the seam whenever both halves are the same card, and checks that two card-shaped halves came out of it. It only says anything if they did not. |
 
 **Front: work it out** reads which side is the front off the batch, and is the
 default. No single card can say — it has two pictures and nothing to choose

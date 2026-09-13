@@ -763,9 +763,14 @@ def split_regions(im, force=False, background="dark"):
     box = _card_box(m, stats)
     w, h = im.size
     x0, y0, x1, y1 = box if box else (0, 0, w - 1, h - 1)
+    # Halfway along the content by WIDTH, not the average of its two ends.
+    # Those differ by one, and the one is the last column of the first card: it
+    # lands at the inner edge of the second half, where the edge crop magnifies
+    # it into a visible strip of the wrong card. Cards that touch have no gap
+    # to absorb a rounding error.
     if (x1 - x0) >= (y1 - y0):
-        return _cut_at(im, (x0 + x1) // 2, True)
-    return _cut_at(im, (y0 + y1) // 2, False)
+        return _cut_at(im, x0 + (x1 - x0 + 1) // 2, True)
+    return _cut_at(im, y0 + (y1 - y0 + 1) // 2, False)
 
 
 def clipped_edges(im, tolerance=2, background="dark"):

@@ -576,6 +576,24 @@ def main():
             check(imaging.clipped_edges(half),
                   f"{which}: this scan is cropped flush and that should be reported")
 
+        # The same arithmetic stated plainly, at three widths: halfway along
+        # the content by WIDTH, not the average of its two ends. Those differ
+        # by one whenever the width is even, which is most of the time.
+        for width in (1486, 1487, 1488):
+            pair = Image.new("RGB", (width, 1000), (0, 0, 0))
+            half_w = width // 2
+            pair.paste(Image.new("RGB", (half_w, 1000), (190, 60, 60)), (0, 0))
+            pair.paste(Image.new("RGB", (width - half_w, 1000), (60, 60, 190)),
+                       (half_w, 0))
+            got = imaging.split_regions(pair, force=True)
+            check(abs(got[0].size[0] - half_w) <= 1,
+                  f"a {width}px pair divided {got[0].size[0]}/{got[1].size[0]}, "
+                  f"but the cards meet at {half_w}")
+            opening = np.asarray(got[1].convert("RGB"))[:, 0].mean(axis=0)
+            check(opening[2] > opening[0],
+                  f"the second half of a {width}px pair opens on a column that is "
+                  f"red, not blue: {opening.round().tolist()}")
+
         # End to end, the crops come out and nothing in them is invented.
         flushout = os.path.join(out, "flush")
         flushplan = batch.Plan(cards=[batch.Card(batch.Face(flush_path, 0),
