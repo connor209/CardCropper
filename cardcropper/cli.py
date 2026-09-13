@@ -16,7 +16,8 @@ from . import batch, imaging
 def main():
     ap = argparse.ArgumentParser(
         prog="cardcropper --cli",
-        description="Pair card scans and write corner & edge crops for each face.")
+        description="Pair card scans — or divide the ones holding both faces — "
+                    "and write corner & edge crops for each face.")
     ap.add_argument("inputs", nargs="+",
                     help="scan files, or folders of scans, in front/back order")
     ap.add_argument("--out", required=True, help="output folder")
@@ -30,7 +31,15 @@ def main():
                     help="where each card's crops sit relative to its scans "
                          "(default: crops-last)")
     ap.add_argument("--no-originals", action="store_true",
-                    help="write only the crops, leaving the scans where they are")
+                    help="write only the crops — no copy of the scan, and no "
+                         "front/back cut out of a combined one")
+    ap.add_argument("--split", choices=batch.SPLIT_MODES, default="auto",
+                    help="auto = look at each scan and divide the ones holding "
+                         "both faces, single = every scan is one face, combined "
+                         "= every scan holds both (default: auto)")
+    ap.add_argument("--front", choices=("first", "second"), default="first",
+                    help="which half of a combined scan is the front: first is "
+                         "the left or top one (default: first)")
     args = ap.parse_args()
 
     paths = []
@@ -42,7 +51,26 @@ def main():
     if not paths:
         sys.exit("no images found")
 
-    plan = batch.pair_sequential(paths)
+    # Only in auto, and only worth reporting because on a cloud-synced folder
+    # this is where the wait is: every scan has to be streamed down before
+    # anything can be planned. Rewritten in place on a terminal, and left out
+    # entirely when the output is a log file, where a thousand half-lines of
+    # progress bury the one line that matters.
+    live = sys.stderr.isatty()
+
+    def examining(i, total, path):
+        if not live:
+            return
+        print(f"\rexamining scan {i}/{total}…", end="", file=sys.stderr, flush=True)
+        if i == total:
+            print("\r" + " " * 32 + "\r", end="", file=sys.stderr, flush=True)
+
+    plan = batch.plan_scans(paths, split=args.split,
+                            front_first=args.front == "first",
+                            progress=examining)
+    combined = sum(1 for c in plan.cards if c.combined)
+    if combined:
+        print(f"{combined} of {len(plan.cards)} card(s) have both faces on one scan")
     for w in plan.warnings:
         print(f"warning: {w}", file=sys.stderr)
     if not plan.cards:
@@ -57,7 +85,7 @@ def main():
 
     def report(i, total, card, names, notes, err):
         if err:
-            print(f"[{i}/{total}] FAILED {os.path.basename(card.front)}: {err}")
+            print(f"[{i}/{total}] FAILED {card.front.name}: {err}")
             return
         print(f"[{i}/{total}] {names[0]} … {names[-1]}"
               + ("   " + "; ".join(notes) if notes else ""))
@@ -71,8 +99,8 @@ def main():
     # failed has long scrolled away, and it is the only line that needs acting
     # on — those two scans are the ones to feed back in.
     for i, card, exc in failures:
-        print(f"  card {i}: {os.path.basename(card.front)} + "
-              f"{os.path.basename(card.back)} — {exc}", file=sys.stderr)
+        print(f"  card {i}: {card.front.name} + {card.back.name} — {exc}",
+              file=sys.stderr)
     return 1 if failed else 0
 
 

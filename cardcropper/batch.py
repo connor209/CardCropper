@@ -1,10 +1,10 @@
 """
 Pairing scans into cards, and writing an organised folder of four images each.
 
-The pixel work lives in `imaging`. This module decides which two files are one
-card, what the output files are called, and in what order they sit — which is
-the part that has to be right for a bulk uploader reading the folder in
-filename order.
+The pixel work lives in `imaging`. This module decides which two FACES are one
+card — two separate files, or the two halves of one scan that holds both —
+what the output files are called, and in what order they sit, which is the part
+that has to be right for a bulk uploader reading the folder in filename order.
 """
 
 import os
@@ -53,6 +53,21 @@ RETRY_WAIT = 0.7
 #: is legibility against a clean run of numbers.
 NAMING = ("grouped", "sequence")
 
+#: How a folder of scans is read: one card per PAIR of files, or one card per
+#: file with both faces on it.
+#:
+#: `auto` asks each scan which it is, and is the default because guessing wrong
+#: is silent. A combined scan run as a single card is not rejected by any of the
+#: geometry checks — see imaging's `splitting` notes — it simply yields crops of
+#: the pair's outer corners, two of which are interior artwork.
+#:
+#: The explicit settings exist for the two cases `auto` cannot serve: a batch
+#: the operator already knows the shape of and does not want examined file by
+#: file, and combined scans with the cards laid touching, where there is no
+#: strip of bed to find and the division has to be asserted rather than
+#: detected.
+SPLIT_MODES = ("auto", "single", "combined")
+
 
 def natural_key(path):
     """
@@ -97,16 +112,55 @@ def _io(fn, *args):
 
 
 @dataclass
+class Face:
+    """
+    One side of a card, and where to find it.
+
+    `side` is None when the file holds nothing but this face, and 0 or 1 when
+    the file holds both and this is the first or second of them in reading
+    order — left then right, or top then bottom.
+
+    A face is addressed rather than named because a combined scan gives two
+    faces the same filename, and every place that used to assume "one path, one
+    face" — the table, the swap, the log — has to be able to tell them apart.
+    """
+    path: str
+    side: int = None
+
+    @property
+    def name(self):
+        base = os.path.basename(self.path)
+        return base if self.side is None else f"{base} ({self.side + 1} of 2)"
+
+
+def as_face(face):
+    """A Face from either a Face or a bare path."""
+    return face if isinstance(face, Face) else Face(face)
+
+
+@dataclass
 class Card:
-    """One card: the two files it was scanned into, plus a working label."""
-    front: str
-    back: str
+    """One card: the two faces it was scanned into, plus a working label."""
+    front: Face
+    back: Face
     label: str = ""
 
     def __post_init__(self):
+        self.front = as_face(self.front)
+        self.back = as_face(self.back)
         if not self.label:
-            stem = os.path.splitext(os.path.basename(self.front))[0]
+            stem = os.path.splitext(os.path.basename(self.front.path))[0]
             self.label = stem
+
+    @property
+    def combined(self):
+        """Whether both faces are halves of one scan."""
+        return self.front.side is not None or self.back.side is not None
+
+    @property
+    def sources(self):
+        """The distinct files this card is read from — one of them, or two."""
+        return list(dict.fromkeys([self.front.path, self.back.path]))
 
 
 @dataclass
@@ -123,20 +177,68 @@ class Plan:
         return []
 
 
-def pair_sequential(paths):
+def plan_scans(paths, split="auto", front_first=True, progress=None, probe=None):
     """
-    Pair a sorted run of scans as front, back, front, back...
+    Turn a sorted run of scans into cards.
 
-    An odd file out is reported rather than dropped or guessed at. A scanner
-    that jams mid-sheet leaves exactly one orphan, and every card after it
-    would otherwise be built from the back of one card and the front of the
-    next — which looks like a working run until someone opens the photos.
+    A scan holding both faces is one card on its own. Everything else pairs
+    with its neighbour as front, back, front, back — and an odd file out is
+    reported rather than dropped or guessed at. A scanner that jams mid-sheet
+    leaves exactly one orphan, and every card after it would otherwise be built
+    from the back of one card and the front of the next, which looks like a
+    working run until someone opens the photos.
+
+    A combined scan ENDS a pairing rather than joining one, so a single file
+    stranded beside combined scans is called out instead of being paired across
+    them with another stray from further down the folder.
+
+    `front_first` says which half of a combined scan is the front. There is no
+    attempt to work that out from the pixels: the honest signal — that every
+    back in a batch looks like every other back — needs the whole batch, and
+    the dishonest ones (a back is darker, a back is symmetrical) are wrong on
+    enough card games to put the wrong face in the gallery thumbnail without
+    saying so. The scanner puts them down the same way every time, so this is
+    one setting for the batch and a Swap for the row that is not.
+
+    `progress(i, total, path)` is called as each file is examined — only in
+    `auto`, which is the only mode that opens them. `probe(path)` replaces the
+    examination itself, which is how the window caches it: the answer for a
+    file does not change, and re-reading a folder every time a setting is
+    flipped is the difference between the settings feeling instant and feeling
+    broken.
     """
+    probe = probe or imaging.probe
     ordered = sorted(paths, key=natural_key)
-    cards = [Card(ordered[i], ordered[i + 1])
-             for i in range(0, len(ordered) - 1, 2)]
-    leftover = ordered[len(cards) * 2:]
+    cards, leftover, pending = [], [], None
+    sides = (0, 1) if front_first else (1, 0)
+    for i, path in enumerate(ordered, 1):
+        if progress and split == "auto":
+            progress(i, len(ordered), path)
+        try:
+            combined = split == "combined" or (split == "auto" and probe(path))
+        except Exception:                               # noqa: BLE001
+            # An unreadable scan is not this function's problem to report — it
+            # fails loudly in the run, per card, where it can be retried. Here
+            # it is simply not a combined scan.
+            combined = False
+        if combined:
+            if pending is not None:
+                leftover.append(pending)
+                pending = None
+            cards.append(Card(Face(path, sides[0]), Face(path, sides[1])))
+        elif pending is None:
+            pending = path
+        else:
+            cards.append(Card(Face(pending), Face(path)))
+            pending = None
+    if pending is not None:
+        leftover.append(pending)
     return Plan(cards=cards, leftover=leftover)
+
+
+def pair_sequential(paths):
+    """Pair a sorted run of one-face scans — `plan_scans` without the probe."""
+    return plan_scans(paths, split="single")
 
 
 def output_names(index, card, naming="grouped", order="crops-last", ext=".jpg"):
@@ -154,6 +256,32 @@ def output_names(index, card, naming="grouped", order="crops-last", ext=".jpg"):
             for i, role in enumerate(roles)]
 
 
+def _scans_of(card, notes):
+    """
+    The card's two faces, each as its own scan, ready to be straightened.
+
+    A combined scan is opened and divided ONCE, not once per face: the halves
+    are two crops of one decode, and decoding a 40-megapixel flatbed scan twice
+    to throw half of each away is the slowest thing this app could do per card.
+
+    Where the division was detected when the batch was planned but cannot be
+    found now, it is forced rather than refused. The plan is made from a 900px
+    decode and the run from full resolution, so the two can disagree at the
+    margin — on cards laid almost touching — and refusing there would fail a
+    card the operator has already told the app the shape of.
+    """
+    if not card.combined:
+        return {"front": _io(imaging.load, card.front.path),
+                "back": _io(imaging.load, card.back.path)}
+    source = _io(imaging.load, card.front.path)
+    regions = imaging.split_regions(source)
+    if regions is None:
+        regions = imaging.split_regions(source, force=True)
+        notes.append("no gap found between the two cards — divided down the "
+                     "middle; check the crops")
+    return {"front": regions[card.front.side], "back": regions[card.back.side]}
+
+
 def process_card(card, out_dir, index, naming="grouped", order="crops-last",
                  style="grading", copy_originals=True, quality=95):
     """
@@ -163,18 +291,29 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
     repeat, and a run that consumes its own input cannot be repeated — if a
     pairing turns out to be off by one, the fix is to pair again, which is only
     possible while the scans are still where the scanner left them.
+
+    A card read from a combined scan has no original to copy — the file holds
+    the other face too — so what is written for each face is that face cut out
+    of it. See the comment where it happens.
     """
     notes = []
     names = output_names(index, card, naming, order)
     by_role = dict(names)
+    scans = _scans_of(card, notes)
     faces = {}
 
-    for face, path in (("front", card.front), ("back", card.back)):
-        source = _io(imaging.load, path)
+    for face in ("front", "back"):
+        source = scans[face]
         exact, padded, angle = imaging.straighten(source)
         ok, why = imaging.detection_ok(exact, source)
         if not ok:
             notes.append(f"{face}: {why}")
+        elif not card.combined and imaging.split_regions(source) is not None:
+            # Cheap here, and the failure it catches is the expensive one: a
+            # scan holding both faces, run as a single card, passes every check
+            # above and produces crops of the PAIR's outer corners.
+            notes.append(f"{face}: this scan looks like it holds two cards — "
+                         "try the combined setting")
         faces[face] = (exact, padded)
         if abs(angle) >= 0.05:
             notes.append(f"{face}: deskewed {angle:+.2f}°")
@@ -184,8 +323,14 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
         exact, padded = faces[face]
         if copy_originals:
             dest = os.path.join(out_dir, by_role[face])
-            source_path = card.front if face == "front" else card.back
-            if os.path.splitext(source_path)[1].lower() == os.path.splitext(dest)[1].lower():
+            source_path = getattr(card, face).path
+            if card.combined:
+                # There is no original to copy — the file holds the other face
+                # too. What is written instead is this face alone, deskewed and
+                # cut out with CROP_MARGIN of bed around it, which is what the
+                # scan of this card on its own would have been.
+                _io(lambda: padded.save(dest, quality=quality, subsampling=0))
+            elif os.path.splitext(source_path)[1].lower() == os.path.splitext(dest)[1].lower():
                 # copyfile, not copy2. copy2 also copies metadata, which means
                 # os.utime on the destination — and a Google Drive or OneDrive
                 # folder rejects that with [Errno 22] Invalid argument while

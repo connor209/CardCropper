@@ -13,6 +13,7 @@ import shutil
 import sys
 import tempfile
 
+import numpy as np
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,17 +21,55 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cardcropper import batch, imaging          # noqa: E402
 
 
-def make_scan(path, front, angle):
-    """A stand-in scan: a bordered card on a black bed, rotated off-square."""
+def make_card(front):
+    """A stand-in card: a bordered rectangle, yellow face up or navy face down."""
     W, H = 1000, 1400
     card = Image.new("RGB", (W, H), (230, 200, 40) if front else (10, 10, 47))
     d = ImageDraw.Draw(card)
     d.rectangle([60, 80, W - 60, H - 160], fill=(120, 150, 90) if front else (180, 180, 190))
     if not front:
         d.ellipse([2, 2, 40, 40], fill=(230, 230, 235))     # a whitening blob
+    return card
+
+
+def make_scan(path, front, angle):
+    """A stand-in scan: one card on a black bed, rotated off-square."""
     bed = Image.new("RGB", (1400, 1800), (0, 0, 0))
-    bed.paste(card, (200, 200))
+    bed.paste(make_card(front), (200, 200))
     bed.rotate(angle, resample=Image.BICUBIC, fillcolor=(0, 0, 0)).save(path, quality=95)
+
+
+def make_combined(path, angle, gap=60, stacked=False, flipped=False):
+    """
+    A scan with BOTH faces on one bed, the way a flatbed gives them: card down,
+    card flipped, one pass. `flipped` puts the back on the left instead.
+    """
+    cards = [make_card(not flipped), make_card(flipped)]
+    w, h = cards[0].size
+    if stacked:
+        bed = Image.new("RGB", (w + 400, h * 2 + gap + 400), (0, 0, 0))
+        for i, card in enumerate(cards):
+            bed.paste(card, (200, 200 + i * (h + gap)))
+    else:
+        bed = Image.new("RGB", (w * 2 + gap + 400, h + 400), (0, 0, 0))
+        for i, card in enumerate(cards):
+            bed.paste(card, (200 + i * (w + gap), 200))
+    bed.rotate(angle, resample=Image.BICUBIC, fillcolor=(0, 0, 0)).save(path, quality=95)
+
+
+def _difference(a, b):
+    """
+    How far apart two images are, 0 to 255.
+
+    Compared at a common small size because the two faces of a combined scan
+    are deskewed separately and land a pixel or two apart. What this is looking
+    for is not a subtle difference: it is whether the division handed back the
+    same half twice, which reads as 0.
+    """
+    size = (64, 90)
+    pa = np.asarray(a.convert("L").resize(size, Image.BILINEAR)).astype(int)
+    pb = np.asarray(b.convert("L").resize(size, Image.BILINEAR)).astype(int)
+    return float(np.abs(pa - pb).mean())
 
 
 def check(condition, message):
@@ -132,6 +171,125 @@ def main():
         check(len(failures) == 1, "the failure should be reported for re-running")
         check(not os.listdir(partial),
               f"a failed card left files behind: {os.listdir(partial)}")
+
+        # ---------------------------------------------- combined scans
+        #
+        # The failure this whole section guards against is silent: two cards
+        # side by side measure 1.43:1 and one card measures 1.40:1, so a
+        # combined scan run as a single card passes every geometry check and
+        # yields crops of the PAIR's outer corners.
+        both = os.path.join(work, "both")
+        os.makedirs(both)
+        for i, (angle, stacked) in enumerate(
+                [(0.5, False), (-0.4, False), (0.3, True)], 1):
+            make_combined(os.path.join(both, f"{i:04d}.jpg"), angle, stacked=stacked)
+
+        for name in sorted(os.listdir(both)):
+            path = os.path.join(both, name)
+            im = imaging.load(path)
+            regions = imaging.split_regions(im)
+            check(regions is not None and len(regions) == 2,
+                  f"{name}: a scan holding two cards was not divided")
+            # The halves keep the whole of the other axis, so nothing of either
+            # card can have been cut away by the division itself.
+            check(sum(r.size[0] for r in regions) == im.size[0]
+                  or sum(r.size[1] for r in regions) == im.size[1],
+                  f"{name}: the two halves do not add back up to the scan")
+            check(imaging.probe(path),
+                  f"{name}: the small-decode probe disagrees with the full scan")
+
+        # And the other way: a single-card scan must NOT be divided, or every
+        # batch of ordinary scans would be paired into nonsense.
+        for i in range(1, 5):
+            single = os.path.join(scans, f"{i:04d}.jpg")
+            check(imaging.split_regions(imaging.load(single)) is None,
+                  f"{i:04d}.jpg: a single card was read as two")
+            check(not imaging.probe(single), f"{i:04d}.jpg: probe says two cards")
+
+        # A combined scan is one card on its own, and its two faces are the two
+        # halves of the same file.
+        plan = batch.plan_scans(batch.list_images(both))
+        check(len(plan.cards) == 3 and not plan.leftover,
+              f"expected 3 combined cards, got {len(plan.cards)} "
+              f"and {len(plan.leftover)} left over")
+        for card in plan.cards:
+            check(card.combined, "a combined scan was not marked as one")
+            check(card.front.path == card.back.path, "faces should share a file")
+            check({card.front.side, card.back.side} == {0, 1},
+                  "the two faces should be the two halves")
+            check(len(card.sources) == 1, "a combined card reads one file")
+
+        # `--front second` puts the other half in front, and Swap is the same
+        # operation per row.
+        flipped = batch.plan_scans(batch.list_images(both), front_first=False)
+        check(flipped.cards[0].front.side == 1, "front_first=False was ignored")
+
+        # A stray single scan beside combined ones is reported, never paired
+        # across them with another stray from further down the folder.
+        mixed_dir = os.path.join(work, "mixed")
+        os.makedirs(mixed_dir)
+        make_combined(os.path.join(mixed_dir, "0001.jpg"), 0.4)
+        shutil.copy(os.path.join(scans, "0001.jpg"), os.path.join(mixed_dir, "0002.jpg"))
+        make_combined(os.path.join(mixed_dir, "0003.jpg"), -0.3)
+        mixed = batch.plan_scans(batch.list_images(mixed_dir))
+        check(len(mixed.cards) == 2 and len(mixed.leftover) == 1,
+              f"mixed batch: {len(mixed.cards)} card(s), "
+              f"{len(mixed.leftover)} left over — expected 2 and 1")
+        check(all(c.combined for c in mixed.cards),
+              "the single scan was folded into a combined card")
+
+        # `single` must never divide, whatever the scan holds — it is how an
+        # operator overrules the detection.
+        forced_single = batch.plan_scans(batch.list_images(both), split="single")
+        check(len(forced_single.cards) == 1 and len(forced_single.leftover) == 1,
+              "split=single should pair the three files as files, not divide them")
+
+        # `combined` divides even a scan with no gap to find, because there the
+        # operator has asserted what the file holds.
+        touching = os.path.join(work, "touching")
+        os.makedirs(touching)
+        make_combined(os.path.join(touching, "0001.jpg"), 0.0, gap=0)
+        im = imaging.load(os.path.join(touching, "0001.jpg"))
+        check(imaging.split_regions(im) is None,
+              "two touching cards have no gap and must not be divided on a guess")
+        check(len(imaging.split_regions(im, force=True)) == 2,
+              "force should divide a scan with no gap")
+
+        # End to end: four files per combined card, the front leading, and the
+        # two faces actually different — the check that catches a division that
+        # ran but handed back the same half twice.
+        for style in sorted(imaging.STYLES):
+            target = os.path.join(out, "combined-" + style)
+            done, failed, failures = batch.run(plan, target, style=style)
+            check(done == 3 and failed == 0, f"{style}: {done} done, {failed} failed")
+            written = sorted(os.listdir(target))
+            check(len(written) == 12, f"{style}: expected 12 files, got {written}")
+            check(written == [n for i in (1, 2, 3) for _, n in
+                              batch.output_names(i, plan.cards[i - 1])],
+                  f"{style}: files do not sort into the intended sequence")
+            front = imaging.load(os.path.join(target, "0001_1_front.jpg"))
+            back = imaging.load(os.path.join(target, "0001_2_back.jpg"))
+            check(abs(front.size[0] - back.size[0]) <= 4
+                  and abs(front.size[1] - back.size[1]) <= 4,
+                  f"{style}: the two faces came out {front.size} and {back.size} "
+                  "— they should be cut alike")
+            check(_difference(front, back) > 10,
+                  f"{style}: front and back look the same — the scan was not "
+                  "divided, or one half was written twice")
+            # A face cut out of a combined scan is written as the card itself,
+            # not as the half of the bed it sat on: no scanner bed down one side.
+            ratio = max(front.size) / float(min(front.size))
+            check(1.15 <= ratio <= 1.75,
+                  f"{style}: the written front is {ratio:.2f}:1, not card-shaped")
+
+        # A combined scan run as a single card is called out rather than
+        # quietly cropped at the pair's outer corners.
+        as_single = batch.plan_scans(batch.list_images(both), split="single")
+        warned = os.path.join(out, "warned")
+        os.makedirs(warned, exist_ok=True)
+        _, notes = batch.process_card(as_single.cards[0], warned, 1)
+        check(any("two cards" in n for n in notes),
+              f"no warning that the scan holds two cards: {notes}")
 
         import cardcropper.gui                   # noqa: F401  (tkinter present?)
     finally:

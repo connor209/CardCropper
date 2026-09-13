@@ -17,6 +17,11 @@ from. Everything here runs after a deskew.
 **Contrast enhancement manufactures wear.** Auto-contrast on the navy back
 border turns JPEG noise into speckle indistinguishable from whitening. The
 crops written here are straightened and magnified but NOT enhanced.
+
+It also takes a scan that holds BOTH faces of a card at once and divides it
+into two — see the `splitting` section, which explains why such a scan cannot
+be recognised from its proportions and has to be recognised from the strip of
+scanner bed between the cards.
 """
 
 import math
@@ -226,6 +231,145 @@ def detection_ok(exact, source):
     if not 1.15 <= ratio <= 1.75:
         return False, f"detected shape is {ratio:.2f}:1, not card-shaped (~1.40:1)"
     return True, ""
+
+
+# ---------------------------------------------------------------- splitting
+
+#: A scan can hold BOTH faces of one card side by side, which is what a flatbed
+#: gives you when you lay the card down, flip it, and scan the sheet once.
+#:
+#: Such a scan cannot be told from a single-card scan by its proportions, and
+#: that is the whole reason this code exists. Two portrait cards side by side
+#: measure 5.0 x 3.5 — a 1.43:1 rectangle — and one card measures 2.5 x 3.5,
+#: which is 1.40:1 the other way up. `detection_ok` accepts both, so a combined
+#: scan run as a single card passes every check and yields four "corners" that
+#: are the outer corners of the PAIR: two real, two interior artwork. It looks
+#: like a working run. What separates the two cases is not the outline but the
+#: strip of scanner bed BETWEEN the cards, so that is what is looked for.
+
+#: How much of the axis each card must span for a division to be believed.
+#: Anything shorter is dust, a scanner lid edge, or the card's own interior.
+SPLIT_MIN_SPAN = 0.15
+
+#: And how wide the background strip between them must be, as a fraction of the
+#: axis. Two cards laid down by hand never touch along their whole length; a
+#: few pixels of bed is all this needs, and asking for more would refuse the
+#: scans where they were laid close.
+SPLIT_MIN_GAP = 0.003
+
+#: Longest edge a scan is decoded to when `probe` is only deciding how many
+#: cards are on it. Full-resolution decoding of a folder of scans to plan the
+#: batch costs more than the whole crop run afterwards, and the gap between two
+#: cards survives the downscale — it is the one feature this needs.
+PROBE_SIZE = 900
+
+
+def _runs(profile, threshold=0.4):
+    """Contiguous runs of `profile > threshold`, as inclusive (start, end)."""
+    lit = profile > threshold
+    runs, start = [], None
+    for i, on in enumerate(lit):
+        if on and start is None:
+            start = i
+        elif not on and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(lit) - 1))
+    return runs
+
+
+def _division(m, axis):
+    """
+    Where a mask divides into exactly two cards along `axis` (0 for a vertical
+    cut between side-by-side cards, 1 for a horizontal one between stacked
+    cards), or None.
+
+    Measured on how MUCH of each column is lit, for the same reason `_card_box`
+    is: JPEG noise in the black bed clears the ink threshold by itself, so a
+    gap defined as "no lit pixel at all" is never found on a real scan.
+    """
+    profile = m.mean(axis=axis)
+    n = len(profile)
+    runs = [r for r in _runs(profile) if r[1] - r[0] + 1 >= n * SPLIT_MIN_SPAN]
+    if len(runs) != 2:
+        return None
+    if runs[1][0] - runs[0][1] - 1 < max(2, n * SPLIT_MIN_GAP):
+        return None
+    return (runs[0][1] + runs[1][0]) // 2
+
+
+def _card_shaped(m):
+    """Whether a mask's extent is roughly a trading card's 2.5 x 3.5."""
+    box = _card_box(m)
+    if box is None:
+        return False
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0 + 1, y1 - y0 + 1
+    if w < 40 or h < 40:
+        return False
+    return 1.15 <= max(w, h) / float(min(w, h)) <= 1.75
+
+
+def _cut_at(im, cut, vertical):
+    """The scan in two, each half keeping the bed around its own card."""
+    w, h = im.size
+    if vertical:
+        return [im.crop((0, 0, cut, h)), im.crop((cut, 0, w, h))]
+    return [im.crop((0, 0, w, cut)), im.crop((0, cut, w, h))]
+
+
+def split_regions(im, force=False):
+    """
+    A scan holding two cards, cut into two scans of one card each, in reading
+    order — left then right, or top then bottom. None where it holds one card.
+
+    The cut is taken at the MIDDLE of the gap rather than at the edge of either
+    card, and each half keeps the full width of the other axis. Both matter:
+    the lit-fraction boundaries fall slightly inside a tilted card (its extreme
+    corner columns are mostly bed), so cutting there would shave the very
+    corners these crops exist to show. Splitting down the middle of the bed
+    cannot cost a card pixel, and the deskew that follows on each half is the
+    same one a separately scanned card gets.
+
+    `force` divides a scan the caller KNOWS holds two cards but on which no gap
+    could be found — cards laid touching. Halving the detected content is a
+    guess, so it is never made on the app's own initiative.
+    """
+    m = _mask(im)
+    for axis in (0, 1):
+        cut = _division(m, axis)
+        if cut is None:
+            continue
+        vertical = axis == 0
+        halves = (m[:, :cut], m[:, cut:]) if vertical else (m[:cut], m[cut:])
+        if all(_card_shaped(half) for half in halves):
+            return _cut_at(im, cut, vertical)
+    if not force:
+        return None
+    box = _card_box(m)
+    w, h = im.size
+    x0, y0, x1, y1 = box if box else (0, 0, w - 1, h - 1)
+    if (x1 - x0) >= (y1 - y0):
+        return _cut_at(im, (x0 + x1) // 2, True)
+    return _cut_at(im, (y0 + y1) // 2, False)
+
+
+def probe(path):
+    """
+    Whether the scan at `path` holds two cards, decided from a small decode.
+
+    Planning a batch means answering this for every file before any cropping
+    starts, and answering it from full-resolution pixels would mean decoding
+    the whole folder twice. JPEG's DCT scaling gives the reduced image almost
+    free, and the question — is there a strip of bed through the middle — is
+    one a 900px copy answers as well as the original.
+    """
+    with Image.open(path) as raw:
+        raw.draft("RGB", (PROBE_SIZE, PROBE_SIZE))
+        im = ImageOps.exif_transpose(raw).convert("RGB")
+    im.thumbnail((PROBE_SIZE, PROBE_SIZE), Image.BILINEAR)
+    return split_regions(im) is not None
 
 
 # ---------------------------------------------------------------- sheets
