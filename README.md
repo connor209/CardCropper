@@ -118,19 +118,39 @@ Double-click `CardCropper.bat` (or `CardCropper.exe`).
 
 ### Backs too dark to find their own edge
 
-Some backs are printed in a black that measures **0** against a scanner bed of
-0 — a Lorcana back does. The card's border and the bed are not merely similar,
-they are the same number, and no threshold can separate them. What the detector
-finds instead is the frame line printed a few millimetres in, so the corner
-crops come out showing the corners of that frame rather than the corners of the
-card. On a real scan the back detected as 693×987 where the front of the same
-card came out 746×1011.
+Some backs are printed so close to black that the card's border and the bed
+look like the same thing, and the detector finds the frame line printed a few
+millimetres in instead — so the corner crops show the corners of that frame
+rather than the corners of the card. On a real scan a Lorcana back detected as
+693×987 where the front of the same card came out 746×1011.
 
-A card's two faces are the same piece of card at the same resolution, so the
-face that *does* detect knows the size the other should have been. The smaller
-one is grown out to the larger, about its own centre — which is where the
-visible frame is printed — and never past the edge of the scan. The log says
-when it happens and what the two measurements were.
+Measured on a document scanner, they are *not* quite the same thing. Its
+backing reads as exactly zero — every pixel, no noise at all — while the card's
+black border has a third of its pixels above zero. That is a clean separation,
+and what was stepping over it was a fixed margin of 4 added on top of the
+measured bed level. The bed level is already the 98th percentile of the bed and
+carries its own headroom, so the margin was counting the same noise twice. At
+zero, the same back comes out 723×992 against a true 724×988.
+
+That fixes the geometry. It does not make the edge *visible*: black card
+against black backing is still black, so the corner crops are cut in the right
+place but a person reading them cannot see the outline. For that the
+background has to differ from the card — see below.
+
+Where the edge really is invisible, a card's two faces are the same piece of
+card at the same resolution, so the face that *does* detect knows the size the
+other should have been. The smaller one is grown out to the larger, about its
+own centre — which is where the visible frame is printed — and never past the
+edge of the scan. The log says when it happens and what the two measurements
+were.
+
+Only where the smaller face came out inset on every side, though. A box that
+stops short of the card looks exactly like a box stopped short by the edge of
+the scan, and those want opposite treatment: the first is a missed edge worth
+growing back, the second is simply the end of the pixels, and growing it pads
+the card with background. Two faces of one card clipped differently by the same
+scan are each right about their own half, and neither is a reference for the
+other.
 
 This recovers the card's real extent. It cannot recover its *outline*: a black
 border against a black bed has nothing to see, whatever the crop is cut to.
@@ -144,8 +164,14 @@ to 0 against 240 — the clearest edge on the sheet. On a test pair the inky bac
 went from detecting 697×987 with no measurable edge at all, to 740×1030 exact
 with all four edges usable.
 
-Use it for backs printed to the edge in black. A dark bed is still right for
-everything else, and is the default.
+Use it for backs printed to the edge in black, where you want the outline to be
+*visible* and not merely correct. A dark bed is still right for everything else,
+and is the default.
+
+On a document scanner you cannot lay paper behind the card, but the same thing
+is reachable two other ways: many scanners have a background colour in their
+driver, and most ship a carrier sheet — put the card in it with a piece of white
+paper behind, and the pair feeds as one page.
 
 **It is a setting, not a detection, and that was measured before it was
 decided.** A white backing sheet reads as a bright, flat border — ring median

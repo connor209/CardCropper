@@ -324,8 +324,12 @@ def main():
                   f"{style}: files do not sort into the intended sequence")
             front = imaging.load(os.path.join(target, "0001_1_front.jpg"))
             back = imaging.load(os.path.join(target, "0001_2_back.jpg"))
-            check(abs(front.size[0] - back.size[0]) <= 4
-                  and abs(front.size[1] - back.size[1]) <= 4,
+            # Relative, not a pixel count: the two faces are detected
+            # independently and differ by a few tenths of a percent. What this
+            # is for is a division that handed back a card and a half — that
+            # shows up as tens of percent, never as a handful of pixels.
+            check(all(abs(f - b) <= 0.02 * max(f, b)
+                      for f, b in zip(front.size, back.size)),
                   f"{style}: the two faces came out {front.size} and {back.size} "
                   "— they should be cut alike")
             check(_difference(front, back) > 10,
@@ -480,9 +484,15 @@ def main():
         blind.paste(black_back, (40 + BW + 40, 40))
         blinddir = os.path.join(work, "blind")
         os.makedirs(blinddir)
-        blind.save(os.path.join(blinddir, "0001.jpg"), quality=95)
+        # PNG on purpose. This is the LIMITING case — a back whose black is bit
+        # for bit the bed's black — and JPEG will not hold it: the ringing
+        # around the frame line leaks nonzero pixels into the card and hands
+        # the detector the very edge this fixture exists to deny it. On the
+        # scanner measured, a real black border is not quite the bed and IS
+        # found; borrowing is the safety net for when it is not.
+        blind.save(os.path.join(blinddir, "0001.png"))
 
-        halves = imaging.split_regions(imaging.load(os.path.join(blinddir, "0001.jpg")))
+        halves = imaging.split_regions(imaging.load(os.path.join(blinddir, "0001.png")))
         check(halves is not None, "the two cards have bed between them and should divide")
         loose = imaging.straighten(halves[1])[0]
         check(loose.size[0] < BW * 0.95,

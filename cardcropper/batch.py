@@ -365,6 +365,15 @@ def _match_sizes(scans, faces, notes, background="dark"):
         small, large = sizes[face], sizes[other]
         if all(s >= l * (1 - SIZE_TOLERANCE) for s, l in zip(small, large)):
             continue
+        # Only where the face came out INSET on every side. A box that stops
+        # short of the card looks the same as a box stopped short by the edge
+        # of the scan, and they want opposite treatment: the first is a missed
+        # edge to be grown back, the second is the end of the pixels, and
+        # growing it only pads the card with background. Two faces of one card
+        # clipped differently by the same scan are both right about their own
+        # half and neither is a reference for the other.
+        if imaging.clipped_edges(scans[face], background=background):
+            continue
         exact, padded, angle, edges = imaging.straighten(
             scans[face], reference=large, background=background)
         notes.append(

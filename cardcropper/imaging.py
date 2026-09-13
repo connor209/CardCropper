@@ -47,8 +47,20 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 #: band came off at 60% of its height, cut clean through the artwork.
 INK_THRESHOLD = 20
 
-#: How far from the bed a pixel has to sit to count as card.
-BED_MARGIN = 4
+#: How far from the bed a pixel has to sit to count as card — none, and that
+#: is deliberate. The bed level below is already the 98th percentile of the
+#: bed, so it carries its own headroom for noise: two percent of the bed
+#: clears it, against the twelve percent of a row that has to clear it before
+#: the row counts as card at all. Adding a margin on top of that counts the
+#: same noise twice, and it costs real cards.
+#:
+#: Measured on a document scanner, which lays cards on a backing that reads as
+#: EXACTLY zero — every pixel, no noise at all. A Lorcana back's black border
+#: on that backing has a third of its pixels nonzero. That is a clean
+#: separation and a margin of 4 stepped straight over it: the card came out
+#: 693x987 against a true 724x988, and the crops showed the corners of the
+#: frame line printed inside it. At zero it comes out 723x992.
+BED_MARGIN = 0
 
 #: How much of the scan's outer border is taken to be bed when measuring it.
 BED_RING = 0.02
