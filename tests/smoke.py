@@ -524,10 +524,58 @@ def main():
               f"the borrowed size should be reported, got {blindnotes}")
         back_face = imaging.load(os.path.join(blindout, "0001_2_back.jpg"))
         front_face = imaging.load(os.path.join(blindout, "0001_1_front.jpg"))
-        check(abs(back_face.size[0] - front_face.size[0]) <= 8
-              and abs(back_face.size[1] - front_face.size[1]) <= 8,
+        # Relative: what is written out carries the crop margin, and that
+        # margin is held inside the scan, so two faces sitting differently in
+        # their halves keep a few pixels between them even once the CARDS match.
+        check(all(abs(b - f) <= 0.02 * max(b, f)
+                  for b, f in zip(back_face.size, front_face.size)),
               f"the two faces should come out the same size, got {back_face.size} "
               f"and {front_face.size}")
+
+        # ----------------------------- a scan with nothing to measure
+        #
+        # A batch arrived cropped so flush that both cards filled it edge to
+        # edge: three sides of each half are the scan's own boundary and the
+        # fourth is the seam against the next card. One edge slipped the
+        # boundary test, reported 0.23 degrees on its own, and the scan was
+        # rotated by it — putting a hard straight line of fill through every
+        # corner crop. Reading four edges exists precisely so that no single
+        # one decides.
+        FLW, FLH = 744, 1037
+        flush = Image.new("RGB", (FLW * 2, FLH), (0, 0, 0))
+        for i in range(2):
+            face = Image.new("RGB", (FLW, FLH), (150, 60, 70))
+            d = ImageDraw.Draw(face)
+            d.rectangle([30, 30, FLW - 30, FLH - 30], outline=(240, 230, 200), width=6)
+            d.rectangle([0, 0, FLW - 1, 40], fill=(90, 30, 40))
+            flush.paste(face, (i * FLW, 0))
+        flushdir = os.path.join(work, "flush")
+        os.makedirs(flushdir)
+        flush.save(os.path.join(flushdir, "0001.jpg"), quality=95)
+
+        halves = imaging.split_regions(imaging.load(os.path.join(flushdir, "0001.jpg")),
+                                       force=True)
+        check(len(halves) == 2, "a flush pair still divides down the middle")
+        for which, half in zip(("front", "back"), halves):
+            exact, padded, angle, edges = imaging.straighten(half)
+            check(edges >= imaging.MIN_SKEW_EDGES or angle == 0.0,
+                  f"{which}: rotated {angle:+.2f}° on {edges} edge(s) — one edge is "
+                  "not a consensus, and the fill it brings in reads as a hard line "
+                  "through every corner crop")
+            # And nothing is invented past the edge of what was scanned.
+            check(padded.size[0] <= half.size[0] + 2
+                  and padded.size[1] <= half.size[1] + 2,
+                  f"{which}: the crop area {padded.size} is bigger than the scan "
+                  f"{half.size} — that margin is padding, and it reads as bed the "
+                  "card was never photographed against")
+
+        # A tiny angle is not worth a resample: interpolation softens exactly
+        # the detail these crops are cut to show.
+        check(imaging.MIN_SKEW_ANGLE > 0, "there should be a floor on rotating")
+        square = Image.new("RGB", (900, 1250), (0, 0, 0))
+        square.paste(Image.new("RGB", (700, 1000), (170, 160, 140)), (100, 120))
+        _, _, tiny, _ = imaging.straighten(square)
+        check(tiny == 0.0, f"a square card should not be rotated at all, got {tiny:+.3f}")
 
         # ------------------------------ telling the front from the back
         #

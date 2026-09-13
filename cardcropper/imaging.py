@@ -189,6 +189,23 @@ WEAK_REACH = 0.5
 #: of a scan that was divided down the middle.
 CLIPPED_EDGE = 0.2
 
+#: How many edges have to agree before the scan is rotated at all.
+#:
+#: Two, because one is not a consensus and the whole reason for reading four
+#: edges is that any one of them can be lying. Measured on a scan cropped flush
+#: to the cards, where three sides are the scan's own boundary and the fourth
+#: is the seam against the next card: the one edge that got through reported
+#: 0.23 degrees, the card was rotated by it, and the fill that rotation brought
+#: in became a hard straight edge running through the corner crops. There was
+#: nothing to gain either — a card that fills its scan has no room to be
+#: straightened into.
+MIN_SKEW_EDGES = 2
+
+#: And how far off square is worth a resample at all. Rotating is interpolation
+#: and interpolation softens exactly the fine detail these crops exist to show,
+#: so a hundredth of a degree is not worth paying for.
+MIN_SKEW_ANGLE = 0.05
+
 #: Longest edge the mask is measured on when finding the angle.
 #:
 #: The angle is measured small and applied at full size. A flatbed scan of two
@@ -590,7 +607,9 @@ def straighten(im, reference=None, background="dark"):
     """
     measured = [a for a in skew_sides(_mask(_small(im), background)).values()
                 if a is not None]
-    angle = float(np.median(measured)) if measured else 0.0
+    angle = float(np.median(measured)) if len(measured) >= MIN_SKEW_EDGES else 0.0
+    if abs(angle) < MIN_SKEW_ANGLE:
+        angle = 0.0
     # Padded with the BED's colour. Filling a light-bedded scan's corners with
     # black would hand the next step four black triangles, and on a light bed
     # black is exactly what a card looks like.
@@ -604,7 +623,14 @@ def straighten(im, reference=None, background="dark"):
     x0, y0, x1, y1 = box
     exact = rotated.crop((x0, y0, x1 + 1, y1 + 1))
     m = round(CROP_MARGIN * exact.size[0] / CARD_W)
-    padded = rotated.crop((x0 - m, y0 - m, x1 + 1 + m, y1 + 1 + m))
+    # Held inside the scan. Cropping past the edge pads with the bed's colour,
+    # and on a scan cropped flush to the card that invents a margin which reads
+    # as scanner bed — so the corner crop shows a clean silhouette the card was
+    # never photographed against. Better to run the crop to the edge of what
+    # was actually scanned and let it look like what it is.
+    width, height = rotated.size
+    padded = rotated.crop((max(0, x0 - m), max(0, y0 - m),
+                           min(width, x1 + 1 + m), min(height, y1 + 1 + m)))
     return exact, padded, angle, len(measured)
 
 
