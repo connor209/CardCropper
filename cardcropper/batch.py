@@ -559,6 +559,14 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
             notes.append(f"{face}: this scan looks like it holds two cards — "
                          "try the combined setting")
         faces[face] = (exact, padded)
+        contrast = imaging.edge_contrast(padded, background)
+        if contrast and abs(contrast[0] - contrast[1]) < imaging.CONTRAST_FLOOR:
+            other = "a white backing" if background == "dark" else "a dark bed"
+            notes.append(
+                f"{face}: the card's edge reads {contrast[0]:.0f} against a backing "
+                f"of {contrast[1]:.0f} — the crops are cut in the right place, but "
+                f"the outline cannot be made out against that. {other.capitalize()} "
+                "would show it.")
         clipped = imaging.clipped_edges(source, background=background)
         if clipped:
             notes.append(

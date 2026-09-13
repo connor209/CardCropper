@@ -798,6 +798,62 @@ def clipped_edges(im, tolerance=2, background="dark"):
                                    ("bottom", y1 >= h - 1 - tolerance)) if off]
 
 
+#: How thick a band, in reference pixels, counts as the card's EDGE when asking
+#: whether it stands out from what is behind it. Thin: it is the outermost ink
+#: that has to be told apart from the backing, not the artwork further in.
+CONTRAST_BAND = 12
+
+#: How far the card has to sit inside the scan before the question can be asked
+#: at all. Backing down one side is not a margin: on a scan cropped flush the
+#: only background is a sliver in the corner arcs, and measuring against that
+#: reports a healthy contrast for a card that has none anywhere it matters.
+#: That case is a different complaint and already has its own warning.
+CONTRAST_MIN_INSET = 2
+
+#: Below this much difference the card's outline cannot be made out, whatever
+#: the crop is cut to. Calibrated on real scans rather than picked: on a dark
+#: bed a Lorcana back measures 0 against its backing and its front 15, a
+#: navy One Piece back 24, and a bright front 102. On a white backing every one
+#: of those lands between 141 and 243.
+CONTRAST_FLOOR = 40
+
+
+def edge_contrast(padded, background="dark"):
+    """
+    How far the card's outermost ink stands apart from the backing behind it.
+
+    Returns (edge, backing) as brightness on the value channel, or None where
+    there is not enough backing in the scan to compare against.
+
+    This is the difference between a crop that is cut correctly and a crop that
+    can be READ. A corner that has been rounded off or crushed is judged from
+    its profile — the card's outline against what is behind it — and a black
+    border on a black backing has a profile that is cut in exactly the right
+    place and invisible. The app cannot fix that from pixels, but it can say so,
+    and the fix is a sheet of paper.
+    """
+    value = _value(padded)
+    box = _card_box(_mask(padded, background))
+    if box is None:
+        return None
+    x0, y0, x1, y1 = box
+    band = max(2, round(CONTRAST_BAND * (x1 - x0 + 1) / CARD_W))
+    if x1 - x0 < band * 4 or y1 - y0 < band * 4:
+        return None
+
+    height, width = value.shape
+    inset = CONTRAST_MIN_INSET
+    if (x0 < inset or y0 < inset
+            or x1 > width - 1 - inset or y1 > height - 1 - inset):
+        return None
+    backing = np.ones(value.shape, bool)
+    backing[y0:y1 + 1, x0:x1 + 1] = False
+    edge = np.zeros(value.shape, bool)
+    edge[y0:y1 + 1, x0:x1 + 1] = True
+    edge[y0 + band:y1 + 1 - band, x0 + band:x1 + 1 - band] = False
+    return float(np.median(value[edge])), float(np.median(value[backing]))
+
+
 def divided_ok(regions, background="dark"):
     """
     Whether a scan divided WITHOUT a gap to go on came out as two cards.

@@ -588,6 +588,75 @@ def main():
         check(not any("deskewed" in n for n in flushnotes),
               f"nothing here has two edges to deskew from: {flushnotes}")
 
+        # ------------------------- whether the outline can be SEEN at all
+        #
+        # Cutting the crop in the right place and being able to read it are two
+        # different things. A corner is judged from its profile — the card's
+        # outline against what is behind it — and a black border on a black
+        # backing has a profile that is exactly right and invisible. Measured
+        # on real cards: on a dark bed a Lorcana back reads 0 against its
+        # backing and a bright front reads 102.
+        CM = round(6 / 25.4 * 300)
+
+        def on_backing(card, bed):
+            page = Image.new("RGB", (card.size[0] + CM * 2, card.size[1] + CM * 2), bed)
+            page.paste(card, (CM, CM))
+            return page
+
+        inky_card = Image.new("RGB", (700, 980), (6, 6, 10))
+        ImageDraw.Draw(inky_card).rectangle([60, 60, 640, 920], fill=(40, 40, 60))
+        # White-bordered, which is the mirror of the problem: unreadable on a
+        # white backing for exactly the same reason the black back is
+        # unreadable on a dark bed. It is the CONTRAST that matters, not which
+        # way round it is — so no one backing is right for every card, and a
+        # scan carrying both kinds has to compromise.
+        bright_card = Image.new("RGB", (700, 980), (246, 246, 243))
+        ImageDraw.Draw(bright_card).rectangle([60, 60, 640, 920], fill=(120, 150, 170))
+
+        for card, bed, bg, readable in (
+                (inky_card, (0, 0, 0), "dark", False),
+                (inky_card, (242, 243, 240), "light", True),
+                (bright_card, (0, 0, 0), "dark", True),
+                (bright_card, (250, 250, 248), "light", False)):
+            _, padded, _, _ = imaging.straighten(on_backing(card, bed), background=bg)
+            measured = imaging.edge_contrast(padded, bg)
+            check(measured is not None,
+                  f"6mm of backing is enough to measure against, on {bg}")
+            gap = abs(measured[0] - measured[1])
+            check((gap >= imaging.CONTRAST_FLOOR) is readable,
+                  f"edge {measured[0]:.0f} against backing {measured[1]:.0f} is a gap "
+                  f"of {gap:.0f}; expected it to be "
+                  f"{'readable' if readable else 'unreadable'}")
+
+        # A scan cropped flush has no margin to judge against, and saying the
+        # contrast is fine there would be worse than saying nothing: the only
+        # background is a sliver in the corner arcs.
+        flush_half = imaging.split_regions(
+            imaging.load(flush_path), force=True)[0]
+        _, flush_padded, _, _ = imaging.straighten(flush_half)
+        check(imaging.edge_contrast(flush_padded) is None,
+              "with no margin there is nothing to measure the edge against")
+
+        # And it reaches the operator, in the run, in words.
+        inky_dir = os.path.join(work, "inky")
+        os.makedirs(inky_dir)
+        inky_pair = Image.new("RGB", (700 * 2 + CM * 3, 980 + CM * 2), (0, 0, 0))
+        inky_pair.paste(bright_card, (CM, CM))
+        inky_pair.paste(inky_card, (CM * 2 + 700, CM))
+        inky_pair.save(os.path.join(inky_dir, "0001.jpg"), quality=95)
+        inky_out = os.path.join(out, "inky")
+        os.makedirs(inky_out, exist_ok=True)
+        inky_plan = batch.plan_scans(batch.list_images(inky_dir), split="combined",
+                                     front="first")
+        _, inky_notes = batch.process_card(inky_plan.cards[0], inky_out, 1)
+        check(any("outline cannot be made out" in n for n in inky_notes),
+              f"the unreadable face should be called out: {inky_notes}")
+        check(any("white backing would show it" in n.lower() for n in inky_notes),
+              f"and it should say what would fix it: {inky_notes}")
+        check(not any("outline cannot be made out" in n and n.startswith("front")
+                      for n in inky_notes),
+              f"the bright front reads fine and should not be flagged: {inky_notes}")
+
         # ------------------------------ telling the front from the back
         #
         # No single card can say which of its two pictures is the front — it has

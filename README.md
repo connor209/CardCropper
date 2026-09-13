@@ -188,6 +188,37 @@ batch of flush-cropped light-bordered cards, to save one click. So where
 detection fails and the border looks like it could be a backing, the log says
 so and leaves the choice to you.
 
+### It also says when the outline cannot be SEEN
+
+Cutting a crop in the right place and being able to read it are two different
+things. A corner is judged from its profile — the card's outline against
+whatever is behind it — and a black border on a black backing has a profile
+that is exactly right and invisible.
+
+So the app measures the card's outermost ink against the backing behind it and
+says when the gap is too small to read, naming both numbers and which backing
+would fix it. Measured on real cards, on a dark bed:
+
+| | card edge | backing | gap |
+|---|---|---|---|
+| Bright front | 102 | 0 | 102 — reads fine |
+| Navy back | 24 | 0 | 24 — too close |
+| Near-black front | 15 | 0 | 15 — too close |
+| Black back | 0 | 0 | 0 — nothing to see |
+
+On a white backing every one of those lands between 141 and 243.
+
+This is why there is no per-game setting. It is not a property of the game but
+of the card's EDGE, it differs between the two faces of one card, and it cuts
+both ways: a white-bordered card on a white backing is exactly as unreadable as
+a black-bordered one on a dark bed. A measurement covers every game, including
+ones that do not exist yet; a table of games would be wrong the first time
+somebody prints a full-art variant that bleeds to the edge.
+
+It is only asked where there is a margin to ask it of. On a scan cropped flush
+the only background is a sliver in the corner arcs, and measuring against that
+would report a healthy contrast for a card that has none anywhere it matters.
+
 ### Scan a little wider than the card
 
 A scanner set to crop to the card takes the background with it, and the
