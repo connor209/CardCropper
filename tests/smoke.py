@@ -8,6 +8,7 @@ somebody's hands. Freezing a broken pipeline into an .exe still produces an
 it, which is the worst place to find it.
 """
 
+import math
 import os
 import shutil
 import sys
@@ -394,6 +395,69 @@ def main():
                   f"dark pair {name} came out {ratio:.2f}:1 at {face.size} — a real "
                   "card is about 1.36:1, so this carries part of the other card "
                   "or lost part of its own")
+
+        # --------------------------------- a real scan's shape, measured
+        #
+        # Rebuilt from a scan that failed in someone's hands, after fetching it
+        # and MEASURING it rather than guessing at it. 1486x1032 at 300dpi: two
+        # cards with a 9px seam, and a scan window 87.4mm tall against a card
+        # that is 88mm, so the cards run off the top and bottom with no bed
+        # there at all.
+        #
+        # What broke was the back. It is near-black, and down its left third
+        # the lit fraction of each column wanders either side of the "40% lit"
+        # bar — 0.39, 0.56, 0.41. Every stretch that bar produced there was too
+        # short to keep, so the run of card did not resume until 190px into the
+        # back, and the gap between two cards was read as 743 to 942 rather
+        # than the true 743 to 751. The division landed at its middle, 95px
+        # inside the back: the front came out carrying a strip of it at 1.24:1
+        # and the back came out narrow at 1.60:1, and BOTH passed the 1.15-1.75
+        # shape check. The numbers below reproduce that within a hair.
+        W, H, WANDER = 1486, 1032, 200
+        real = Image.new("RGB", (W, H), (0, 0, 0))
+        front = Image.new("RGB", (743, H), (120, 110, 150))
+        ImageDraw.Draw(front).rectangle([0, int(H * 0.55), 743, H], fill=(30, 16, 22))
+        real.paste(front, (0, 0))                       # runs off the left edge
+        back = np.full((H, 734, 3), (9, 11, 18), dtype=np.uint8)
+        back[:, WANDER:] = (14, 17, 52)
+        for x in range(WANDER):
+            band = int(H * (0.45 + 0.12 * math.sin(x / 13.0)))
+            back[(H - band) // 2:(H - band) // 2 + band, x] = (14, 17, 52)
+        b = Image.fromarray(back)
+        d = ImageDraw.Draw(b)
+        d.rectangle([40, 40, 694, 992], outline=(225, 190, 110), width=4)
+        d.polygon([(367, 150), (650, 516), (367, 882), (84, 516)],
+                  outline=(225, 190, 110), width=4)
+        real.paste(b, (752, 0))                         # 9px seam at 743..751
+        realdir = os.path.join(work, "real")
+        os.makedirs(realdir)
+        real.save(os.path.join(realdir, "0001.jpg"), quality=95)
+
+        loaded = imaging.load(os.path.join(realdir, "0001.jpg"))
+        check(len(imaging._card_runs(imaging._mask(loaded), 0)) == 2,
+              f"the near-black back came out as "
+              f"{len(imaging._card_runs(imaging._mask(loaded), 0))} stretches — a "
+              "dark patch inside a card is not the gap between two cards")
+        halves = imaging.split_regions(loaded)
+        check(halves is not None, "a 9px seam between two cards should be found")
+        for which, half in zip(("front", "back"), halves):
+            exact, _, _, _ = imaging.straighten(half)
+            ratio = max(exact.size) / float(min(exact.size))
+            check(1.30 <= ratio <= 1.45,
+                  f"{which} came out {ratio:.2f}:1 at {exact.size} — a card is about "
+                  "1.36:1, so this carries a strip of the other card or lost part "
+                  "of its own")
+
+        # A card the scanner cropped flush is called out: with no bed behind it
+        # those crops cannot show its outline, which is most of what a corner
+        # crop is for.
+        off = imaging.clipped_edges(halves[0])
+        check("top" in off and "bottom" in off,
+              f"a card running off the top and bottom should be reported, got {off}")
+        bedded = Image.new("RGB", (900, 1200), (0, 0, 0))
+        bedded.paste(front.resize((700, 1000)), (100, 100))
+        check(not imaging.clipped_edges(bedded),
+              "a card with bed all round it is not clipped")
 
         # ------------------------------------------------ a dark border
         #

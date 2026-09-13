@@ -618,6 +618,36 @@ def split_regions(im, force=False):
     return _cut_at(im, (y0 + y1) // 2, False)
 
 
+def clipped_edges(im, tolerance=2):
+    """
+    Which of the card's sides run off the scan instead of ending on it.
+
+    Worth reporting because of what it costs. A corner crop exists to show the
+    card's SILHOUETTE against the bed — a corner that has been rounded off or
+    crushed is read from its profile as much as from whitening on its face —
+    and where the scanner has cropped flush to the card there is no bed behind
+    it to read the profile against. The crop still comes out; it just cannot
+    answer the question it was cut to answer.
+
+    It costs the deskew too: an edge lying on the image boundary is a straight
+    line at zero degrees whatever the card is doing, so it gets no vote, and a
+    card clipped on three sides is left measuring its angle from one.
+
+    A scanner set to crop to the card does this, and a card is 88mm tall
+    against a scan bed window often set to 87 or so — the two ends go first.
+    """
+    small = _small(im)
+    box = _card_box(_mask(small))
+    if box is None:
+        return []
+    x0, y0, x1, y1 = box
+    w, h = small.size
+    return [name for name, off in (("left", x0 <= tolerance),
+                                   ("top", y0 <= tolerance),
+                                   ("right", x1 >= w - 1 - tolerance),
+                                   ("bottom", y1 >= h - 1 - tolerance)) if off]
+
+
 def divided_ok(regions):
     """
     Whether a scan divided WITHOUT a gap to go on came out as two cards.

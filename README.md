@@ -116,6 +116,24 @@ Double-click `CardCropper.bat` (or `CardCropper.exe`).
    The app refuses that rather than letting it happen quietly.
 4. **Crop cards.**
 
+### Scan a little wider than the card
+
+A scanner set to crop to the card takes the background with it, and the
+background is half of what a corner crop is for: a corner that has been rounded
+off or crushed is read from its *profile* — its outline against the bed — as
+much as from whitening on its face. Crop flush and that outline is the one
+thing missing.
+
+A real scan measured 87.4mm tall against a card that is 88.0mm, so both cards
+in it ran clean off the top and bottom. The crops still came out; they just
+could not answer the question they were cut to answer. It costs the deskew too,
+since an edge lying on the image boundary is a straight line at zero degrees
+whatever the card is doing, so it gets no vote — a card clipped on three sides
+is left measuring its angle from one.
+
+The app says so in the log when it sees it, naming the sides. A few millimetres
+of bed around the card is all it needs.
+
 ### Scans that hold both faces
 
 The **Scans** setting decides how a folder is read, and it defaults to

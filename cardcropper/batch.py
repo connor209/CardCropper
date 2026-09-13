@@ -369,6 +369,12 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
             notes.append(f"{face}: this scan looks like it holds two cards — "
                          "try the combined setting")
         faces[face] = (exact, padded)
+        clipped = imaging.clipped_edges(source)
+        if clipped:
+            notes.append(
+                f"{face}: the card runs off the {', '.join(clipped)} of the scan — "
+                "no background behind it there, so those crops cannot show its "
+                "outline. Scan a little wider than the card.")
         if not edges:
             # Said out loud because the alternative reads as a broken deskew:
             # a visibly crooked card that came out just as crooked, with
