@@ -13,16 +13,28 @@ import shutil
 import sys
 import tempfile
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cardcropper import batch, imaging          # noqa: E402
 
 
-def make_scan(path, front, angle):
-    """A stand-in scan: a bordered card on a black bed, rotated off-square."""
-    W, H = 1000, 1400
+#: The stand-in card's size in `make_scan`, so a test can say what the crop
+#: box should have come back as.
+CARD_W, CARD_H = 1000, 1400
+
+
+def make_scan(path, front, angle, glow=0):
+    """
+    A stand-in scan: a bordered card on a black bed, rotated off-square.
+
+    `glow` adds the halo a real flatbed puts around a card — light bleeding
+    sideways under the platen, and the sensor smearing along its travel. It is
+    the reason the crop box needs to measure an edge rather than threshold one:
+    a halo above the ink threshold is, to a threshold, card.
+    """
+    W, H = CARD_W, CARD_H
     card = Image.new("RGB", (W, H), (230, 200, 40) if front else (10, 10, 47))
     d = ImageDraw.Draw(card)
     d.rectangle([60, 80, W - 60, H - 160], fill=(120, 150, 90) if front else (180, 180, 190))
@@ -30,7 +42,11 @@ def make_scan(path, front, angle):
         d.ellipse([2, 2, 40, 40], fill=(230, 230, 235))     # a whitening blob
     bed = Image.new("RGB", (1400, 1800), (0, 0, 0))
     bed.paste(card, (200, 200))
-    bed.rotate(angle, resample=Image.BICUBIC, fillcolor=(0, 0, 0)).save(path, quality=95)
+    bed = bed.rotate(angle, resample=Image.BICUBIC, fillcolor=(0, 0, 0))
+    if glow:
+        halo = bed.filter(ImageFilter.GaussianBlur(glow))
+        bed = ImageChops.lighter(bed, halo.point(lambda v: int(v * 0.55)))
+    bed.save(path, quality=95)
 
 
 def check(condition, message):
@@ -83,6 +99,36 @@ def main():
             _, _, found = imaging.straighten(im)
             check(abs(found - angle) < 0.15,
                   f"deskew found {found:+.2f}° where {angle:+.2f}° was applied")
+
+        # The crop box has to land on the card's edge, not on the halo around
+        # it. A scanner leaves a bright card sitting in tens of pixels of
+        # bleed, and an outline that stops where the GLOW dies pushes every
+        # crop outward — far worse on a yellow front (value ~230) than on a
+        # navy back (~47), which is how it reads as "fronts crop badly".
+        for front in (True, False):
+            face = "front" if front else "back"
+            for glow in (0, 9):
+                path = os.path.join(work, f"halo-{face}-{glow}.jpg")
+                make_scan(path, front=front, angle=0.5, glow=glow)
+                exact, padded, _ = imaging.straighten(imaging.load(path))
+                ref = CARD_W / imaging.CARD_W      # scan px per reference px
+                for got, want, axis in ((exact.size[0], CARD_W, "width"),
+                                        (exact.size[1], CARD_H, "height")):
+                    check(abs(got - want) / ref <= 6,
+                          f"{face} glow={glow}: crop box {axis} is off by "
+                          f"{abs(got - want) / ref:.0f} reference px")
+
+                # And the user-visible consequence of getting that wrong: an
+                # edge strip keeps only CROP_MARGIN // 3 reference px of bed
+                # outside the card, so an outline that drifts outward slides
+                # the strip off the card into black.
+                margin, cut, strip = imaging._cuts(padded)
+                for name, crop in imaging.edge_crops(padded, cut, strip, margin):
+                    v = imaging._value(crop)
+                    on_card = (v > v.max() * 0.5).mean()
+                    check(on_card > 0.6,
+                          f"{face} glow={glow}: {name} strip is only "
+                          f"{on_card:.0%} card — it has slid off the edge")
 
         # Continuous numbering has to be continuous across cards.
         seq = [n for i in (1, 2, 3) for _, n in batch.output_names(i, None, "sequence")]

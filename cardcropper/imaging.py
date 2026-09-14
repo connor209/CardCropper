@@ -35,6 +35,35 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 #: separates them cleanly (0 against 47) and works on a yellow front too.
 INK_THRESHOLD = 20
 
+#: How far either side of the rough outline the card's true edge is hunted
+#: for, as a fraction of the card's own width and height.
+#:
+#: A scanner does not render a card as a step from bed to border. Light bleeds
+#: sideways under the platen and the sensor smears in the direction of travel,
+#: so a bright card sits in a halo that fades out over tens of pixels — and a
+#: halo above INK_THRESHOLD is, to a threshold, card. That is the whole reason
+#: the crops here drifted: the outline was landing where the GLOW died rather
+#: than where the card ends, which pushes every crop outward and can walk an
+#: edge strip clean off the card into black.
+#:
+#: The halo is far worse on a yellow front (value ~230) than on a navy back
+#: (value ~47), which is why fronts drifted further than backs on the same
+#: scanner — the giveaway that it was bleed and not geometry.
+EDGE_SEARCH_OUT = 0.07
+EDGE_SEARCH_IN = 0.05
+
+#: Rows (or columns) sampled to build the profile one edge is measured on,
+#: as a fraction to discard at each end. Rounded corners and any residual tilt
+#: live at the ends; the middle half of an edge is the part that is straight.
+EDGE_BAND = 0.25
+
+#: How many pixels of scanner bed must sit outside an edge before it is worth
+#: measuring. Below this the halo is clipped by the edge of the scan and there
+#: is no background left to read a level against — and a card framed that
+#: tightly has nowhere for the glow to spread anyway, so the rough outline is
+#: already close and is left alone.
+EDGE_BED_MIN = 12
+
 #: The reference card size all crop measurements are expressed against, so one
 #: set of numbers holds across scans that framed the card differently. Crops
 #: are still cut at the scan's own resolution — this is only the yardstick.
@@ -119,18 +148,22 @@ def _value(im):
     return np.asarray(im.convert("RGB")).astype(int).max(axis=2)
 
 
-def _mask(im):
-    return _value(im) > INK_THRESHOLD
+def _mask(v):
+    return v > INK_THRESHOLD
 
 
-def _card_box(m):
+def _coarse_box(v):
     """
-    The card's extent, found from how MUCH of each row and column is lit rather
-    than from any single lit pixel. JPEG noise in the black margin clears the
-    ink threshold on its own, so an any-pixel bounding box reaches well past
-    the card — and then every crop is taken against background instead of the
-    border.
+    Roughly where the card is, found from how MUCH of each row and column is
+    lit rather than from any single lit pixel. JPEG noise in the black margin
+    clears the ink threshold on its own, so an any-pixel bounding box reaches
+    well past the card.
+
+    Rough is all this is. It finds the card but not its edge: a threshold
+    cannot tell the card from the halo around it, and lands somewhere out in
+    the glow. `_card_box` measures the real edge from here.
     """
+    m = _mask(v)
     lit_cols = m.mean(axis=0) > 0.4
     lit_rows = m.mean(axis=1) > 0.4
     xs = np.where(lit_cols)[0]
@@ -138,6 +171,109 @@ def _card_box(m):
     if not len(xs) or not len(ys):
         return None
     return int(xs[0]), int(ys[0]), int(xs[-1]), int(ys[-1])
+
+
+def _median(w, a, b):
+    """Median of w over an index span given in either order, clipped to w."""
+    lo, hi = sorted((a, b))
+    lo, hi = max(0, lo), min(len(w) - 1, hi)
+    if hi < lo:                             # span fell off the window
+        return float(w[0] if a < 0 else w[-1])
+    return float(np.median(w[lo:hi + 1]))
+
+
+def _edge(profile, start, inward, out_span, in_span):
+    """
+    Where one edge of the card really is, given a brightness profile across it.
+
+    `start` is the rough outline's guess and `inward` is +1 or -1, the
+    direction that travels into the card. Two steps, and the order matters:
+
+    **Find the step, not the light.** The halo fades; the card's edge is a
+    cliff. Scanning outward-in for the first place the profile climbs steeply
+    passes straight over the glow and stops at the paper. Taking the steepest
+    point outright would not do — the border-to-artwork boundary inside the
+    card is a cliff too, and sometimes a taller one, so it has to be the
+    OUTERMOST steep place rather than the steepest.
+
+    **Then take the half-way level.** Blur is symmetric, so whatever softened
+    the edge left its midpoint sitting exactly where the edge was. Reading the
+    background just outside the step and the border just inside it and
+    crossing at the mean of the two recovers the original edge to about a
+    pixel, however soft the scan is.
+    """
+    lo = max(0, start - (out_span if inward > 0 else in_span))
+    hi = min(len(profile), start + (in_span if inward > 0 else out_span) + 1)
+    if hi - lo < 12:
+        return start
+    w = np.convolve(profile[lo:hi].astype(float), np.ones(3) / 3.0, mode="same")
+    gradient = np.diff(w) * inward          # rising as we travel inward
+    peak = gradient.max()
+    if peak <= 0:
+        return start
+    steep = np.where(gradient >= peak * 0.4)[0]
+    i = int(steep[0]) if inward > 0 else int(steep[-1]) + 1
+
+    near = max(3, (hi - lo) // 12)
+    half = (_median(w, i + inward * 2, i + inward * (2 + near))
+            + _median(w, i - inward * 2, i - inward * (2 + near))) / 2.0
+    j = i
+    while 0 <= j < len(w) and w[j] >= half:         # back out below the level
+        j -= inward
+    while 0 <= j < len(w) and w[j] < half:          # then in to the crossing
+        j += inward
+    return lo + min(max(j, 0), len(w) - 1)
+
+
+def _card_box(v):
+    """
+    The card's extent: the rough outline, then each of its four sides measured
+    against the brightness profile across it. See EDGE_SEARCH_OUT.
+
+    A side is left as the rough outline found it when there is nothing to
+    measure against — the card runs off that end of the scan — or when the
+    measurement comes back further than the search window should have allowed,
+    which means it found something other than the card's edge.
+    """
+    coarse = _coarse_box(v)
+    if coarse is None:
+        return None
+    x0, y0, x1, y1 = coarse
+    h_img, w_img = v.shape
+    w, h = x1 - x0, y1 - y0
+    if w < 40 or h < 40:
+        return coarse
+
+    band_y = slice(y0 + int(h * EDGE_BAND), y1 - int(h * EDGE_BAND) + 1)
+    band_x = slice(x0 + int(w * EDGE_BAND), x1 - int(w * EDGE_BAND) + 1)
+    cols = np.median(v[band_y, :], axis=0)
+    rows = np.median(v[:, band_x], axis=1)
+
+    # EDGE_SEARCH_* is a fraction of the card's WIDTH; the top and bottom get
+    # the same distance in pixels rather than the same fraction of the longer
+    # side, because a halo does not know which way round the card is.
+    out_x, in_x = int(w * EDGE_SEARCH_OUT), int(w * EDGE_SEARCH_IN)
+    tall = CARD_W / float(CARD_H)
+    out_y, in_y = int(h * EDGE_SEARCH_OUT * tall), int(h * EDGE_SEARCH_IN * tall)
+
+    def side(profile, start, inward, out_span, in_span, limit):
+        # A few pixels of bed outside the edge is enough to read a level
+        # against; none at all means the card runs off the scan on this side,
+        # and there is nothing to measure. The window itself is clipped to the
+        # scan, so a tightly framed scan is narrowed rather than skipped.
+        if start < EDGE_BED_MIN or start > limit - EDGE_BED_MIN:
+            return start
+        found = _edge(profile, start, inward, out_span, in_span)
+        moved = (found - start) * inward
+        return found if -out_span <= moved <= in_span else start
+
+    nx0 = side(cols, x0, +1, out_x, in_x, w_img - 1)
+    nx1 = side(cols, x1, -1, out_x, in_x, w_img - 1)
+    ny0 = side(rows, y0, +1, out_y, in_y, h_img - 1)
+    ny1 = side(rows, y1, -1, out_y, in_y, h_img - 1)
+    if nx1 - nx0 < w * 0.8 or ny1 - ny0 < h * 0.8:
+        return coarse
+    return nx0, ny0, nx1, ny1
 
 
 def _left_edge(m, y, run=5):
@@ -150,20 +286,25 @@ def _left_edge(m, y, run=5):
     return None
 
 
-def _skew_degrees(m):
+def _skew_degrees(v):
     """
     Angle of the card's left edge, from a line fit over the straight middle of
     it. The rounded corners are excluded (the top and bottom 18%) or they drag
     the fit toward zero — which is exactly the failure that makes a deskew look
     like it ran while leaving the corners unusable.
+
+    The threshold is good enough here where it is not good enough for the crop
+    box: a halo shifts every row's left edge by about the same amount, and a
+    constant offset does not tilt the line that is fitted through them.
     """
-    box = _card_box(m)
+    box = _coarse_box(v)
     if box is None:
         return 0.0
     _, y0, _, y1 = box
     height = y1 - y0
     if height < 100:
         return 0.0
+    m = _mask(v)
     ys, xs = [], []
     for y in range(y0 + int(height * 0.18), y1 - int(height * 0.18)):
         x = _left_edge(m, y)
@@ -193,9 +334,9 @@ def straighten(im):
     every crop taken from it, and each interpolation costs a little edge
     definition on exactly the fine detail the crop exists to show.
     """
-    angle = _skew_degrees(_mask(im))
+    angle = _skew_degrees(_value(im))
     rotated = im.rotate(-angle, resample=Image.BICUBIC, expand=True, fillcolor=(0, 0, 0))
-    box = _card_box(_mask(rotated))
+    box = _card_box(_value(rotated))
     if box is None:
         return rotated, rotated, angle
     x0, y0, x1, y1 = box
