@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -34,11 +34,28 @@ def make_card(front):
     return card
 
 
-def make_scan(path, front, angle):
-    """A stand-in scan: one card on a black bed, rotated off-square."""
+#: The stand-in card's size, so a test can say what the crop box should have
+#: come back as.
+CARD_W, CARD_H = 1000, 1400
+
+
+def make_scan(path, front, angle, glow=0):
+    """
+    A stand-in scan: one card on a black bed, rotated off-square.
+
+    `glow` adds the halo a real flatbed puts around a card — light bleeding
+    sideways under the platen, and the sensor smearing along its travel. It is
+    why the crop box has to MEASURE an edge rather than threshold one: a halo
+    above the bar is, to any bar, card, and the bar has to sit low enough to
+    see a near-black card whole.
+    """
     bed = Image.new("RGB", (1400, 1800), (0, 0, 0))
     bed.paste(make_card(front), (200, 200))
-    bed.rotate(angle, resample=Image.BICUBIC, fillcolor=(0, 0, 0)).save(path, quality=95)
+    bed = bed.rotate(angle, resample=Image.BICUBIC, fillcolor=(0, 0, 0))
+    if glow:
+        halo = bed.filter(ImageFilter.GaussianBlur(glow))
+        bed = ImageChops.lighter(bed, halo.point(lambda v: int(v * 0.55)))
+    bed.save(path, quality=95)
 
 
 def make_full_art(dark_border=True):
@@ -677,6 +694,38 @@ def main():
               f"a flush-cropped scan should say so: {flushnotes}")
         check(not any("deskewed" in n for n in flushnotes),
               f"nothing here has two edges to deskew from: {flushnotes}")
+
+        # ------------------------- the crop box lands ON the edge
+        #
+        # A scanner leaves a bright card sitting in tens of pixels of bleed,
+        # and the card-vs-bed bar is read off the scan precisely so that it can
+        # drop low enough to see a near-black border — which is exactly low
+        # enough to call that bleed card. An outline that stops where the GLOW
+        # dies pushes every crop outward, worse the brighter the card is.
+        for front in (True, False):
+            face = "front" if front else "back"
+            for glow in (0, 9):
+                path = os.path.join(work, f"halo-{face}-{glow}.jpg")
+                make_scan(path, front=front, angle=0.5, glow=glow)
+                exact, padded, _, _ = imaging.straighten(imaging.load(path))
+                ref = CARD_W / imaging.CARD_W      # scan px per reference px
+                for got, want, axis in ((exact.size[0], CARD_W, "width"),
+                                        (exact.size[1], CARD_H, "height")):
+                    check(abs(got - want) / ref <= 6,
+                          f"{face} glow={glow}: crop box {axis} is off by "
+                          f"{abs(got - want) / ref:.0f} reference px")
+
+                # And the consequence of getting that wrong, which is what an
+                # operator actually sees: an edge strip keeps only
+                # CROP_MARGIN // 3 reference px of bed outside the card, so an
+                # outline that drifts outward slides the strip off into black.
+                margin, cut, strip = imaging._cuts(padded)
+                for name, crop in imaging.edge_crops(padded, cut, strip, margin):
+                    v = imaging._value(crop)
+                    on_card = (v > v.max() * 0.5).mean()
+                    check(on_card > 0.6,
+                          f"{face} glow={glow}: {name} strip is only "
+                          f"{on_card:.0%} card — it has slid off the edge")
 
         # ------------------------- whether the outline can be SEEN at all
         #

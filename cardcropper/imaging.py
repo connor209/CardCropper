@@ -134,6 +134,39 @@ LISTING_CROP = 175
 #: on its face.
 CROP_MARGIN = 22
 
+#: How far either side of the located outline the card's true edge is measured
+#: for, as a fraction of the card's own width.
+#:
+#: A scanner does not render a card as a step from bed to border. Light bleeds
+#: sideways under the platen and the sensor smears in its direction of travel,
+#: so a card sits in a halo that fades out over tens of pixels — and a halo
+#: above the bar is, to any bar, card.
+#:
+#: Which makes this the other half of reading the threshold off each scan.
+#: That bar has to sit low to see a near-black card whole (see INK_THRESHOLD),
+#: and low is exactly where the halo lives: on the generated scans here a
+#: bright front overshot by 13 reference px with no halo at all, and by 73
+#: with a wide one. The bar cannot be both low enough for a black border and
+#: high enough to keep a halo out, because those are the same number.
+#:
+#: So it is not asked to be. The threshold LOCATES the card; each of the four
+#: sides is then measured against the brightness profile across it, which does
+#: not care where the bar was set.
+EDGE_SEARCH_OUT = 0.07
+EDGE_SEARCH_IN = 0.05
+
+#: Rows (or columns) sampled to build the profile one edge is measured on, as
+#: a fraction to discard at each end. Rounded corners and any residual tilt
+#: live at the ends; the middle half of an edge is the part that is straight.
+EDGE_BAND = 0.25
+
+#: How many pixels of bed must sit outside a side before it is worth
+#: measuring. Below this there is no background left to read a level against —
+#: the card runs off the scan, or butts against the next card on the sheet —
+#: and the located outline is kept. See `clipped_edges` and `split_regions`
+#: for the two ways a side ends up with no bed outside it.
+EDGE_BED_MIN = 12
+
 #: Sheet width for the labelled grading sheet, chosen to land at the 1568px
 #: an image is downscaled to before a model sees it. Four columns.
 SHEET_W = 1544
@@ -578,6 +611,106 @@ def load(path):
     return im.convert("RGB")
 
 
+def _median(w, a, b):
+    """Median of w over an index span given in either order, clipped to w."""
+    lo, hi = sorted((a, b))
+    lo, hi = max(0, lo), min(len(w) - 1, hi)
+    if hi < lo:                             # span fell off the window
+        return float(w[0] if a < 0 else w[-1])
+    return float(np.median(w[lo:hi + 1]))
+
+
+def _edge(profile, start, inward, out_span, in_span):
+    """
+    Where one side of the card really is, given a brightness profile across it.
+
+    `start` is the located outline's guess and `inward` is +1 or -1, the
+    direction that travels into the card. The profile is oriented so that
+    entering the card RISES, whichever way round the bed is. Two steps, and the
+    order matters:
+
+    **Find the step, not the light.** The halo fades; the card's edge is a
+    cliff. Scanning outward-in for the first place the profile climbs steeply
+    passes over the glow and stops at the paper. Taking the steepest place
+    outright would not do — the border-to-artwork boundary inside the card is a
+    cliff too, and sometimes a taller one — so it is the OUTERMOST steep place
+    rather than the steepest.
+
+    **Then take the half-way level.** Blur is symmetric, so whatever softened
+    the edge left its midpoint where the edge was. Reading the bed just outside
+    the step and the border just inside it and crossing at the mean of the two
+    recovers the original edge to about a pixel, however soft the scan.
+    """
+    lo = max(0, start - (out_span if inward > 0 else in_span))
+    hi = min(len(profile), start + (in_span if inward > 0 else out_span) + 1)
+    if hi - lo < 12:
+        return start
+    w = np.convolve(profile[lo:hi].astype(float), np.ones(3) / 3.0, mode="same")
+    gradient = np.diff(w) * inward          # rising as we travel inward
+    peak = gradient.max()
+    if peak <= 0:
+        return start
+    steep = np.where(gradient >= peak * 0.4)[0]
+    i = int(steep[0]) if inward > 0 else int(steep[-1]) + 1
+
+    near = max(3, (hi - lo) // 12)
+    half = (_median(w, i + inward * 2, i + inward * (2 + near))
+            + _median(w, i - inward * 2, i - inward * (2 + near))) / 2.0
+    j = i
+    while 0 <= j < len(w) and w[j] >= half:         # back out below the level
+        j -= inward
+    while 0 <= j < len(w) and w[j] < half:          # then in to the crossing
+        j += inward
+    return lo + min(max(j, 0), len(w) - 1)
+
+
+def _measure_box(value, box, background="dark"):
+    """
+    The located outline, with each of its four sides measured onto the card's
+    actual edge. See EDGE_SEARCH_OUT for why a threshold cannot do this.
+
+    A side is kept as it was found when there is nothing to measure against —
+    under EDGE_BED_MIN pixels outside it, which is a card running off the scan
+    or butting against its pair — or when the answer lands outside the search
+    window, which means what it found was not the edge.
+    """
+    x0, y0, x1, y1 = box
+    h_img, w_img = value.shape
+    w, h = x1 - x0, y1 - y0
+    if w < 40 or h < 40:
+        return box
+    # Oriented so that entering the card always rises: on a light bed the card
+    # is what is DARKER than the background, and the step runs the other way.
+    v = (255 - value) if background == "light" else value
+
+    band_y = slice(y0 + int(h * EDGE_BAND), y1 - int(h * EDGE_BAND) + 1)
+    band_x = slice(x0 + int(w * EDGE_BAND), x1 - int(w * EDGE_BAND) + 1)
+    cols = np.median(v[band_y, :], axis=0)
+    rows = np.median(v[:, band_x], axis=1)
+
+    # EDGE_SEARCH_* is a fraction of the card's WIDTH; the top and bottom get
+    # the same distance in pixels rather than the same fraction of the longer
+    # side, because a halo does not know which way round the card is.
+    out_x, in_x = int(w * EDGE_SEARCH_OUT), int(w * EDGE_SEARCH_IN)
+    tall = CARD_W / float(CARD_H)
+    out_y, in_y = int(h * EDGE_SEARCH_OUT * tall), int(h * EDGE_SEARCH_IN * tall)
+
+    def side(profile, start, inward, out_span, in_span, limit):
+        if start < EDGE_BED_MIN or start > limit - EDGE_BED_MIN:
+            return start
+        found = _edge(profile, start, inward, out_span, in_span)
+        moved = (found - start) * inward
+        return found if -out_span <= moved <= in_span else start
+
+    nx0 = side(cols, x0, +1, out_x, in_x, w_img - 1)
+    nx1 = side(cols, x1, -1, out_x, in_x, w_img - 1)
+    ny0 = side(rows, y0, +1, out_y, in_y, h_img - 1)
+    ny1 = side(rows, y1, -1, out_y, in_y, h_img - 1)
+    if nx1 - nx0 < w * 0.8 or ny1 - ny0 < h * 0.8:
+        return box
+    return nx0, ny0, nx1, ny1
+
+
 def _expand_to(box, reference, bounds):
     """
     Grow a card's box out to a size known from elsewhere, about its own centre.
@@ -641,6 +774,9 @@ def straighten(im, reference=None, background="dark"):
     box = _card_box(_mask(rotated, background))
     if box is None:
         return rotated, rotated, angle, len(measured)
+    # Measured onto the card's edge BEFORE anything is compared against it: a
+    # box still carrying its halo is the wrong size to match a face against.
+    box = _measure_box(_value(rotated), box, background)
     if reference:
         box = _expand_to(box, reference, rotated.size)
     x0, y0, x1, y1 = box
