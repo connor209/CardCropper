@@ -531,9 +531,29 @@ def _row_stats(m):
     return m.mean(axis=1), np.where(has, last - first + 1, 0)
 
 
-def _strong(fraction):
+def _strong(fraction, weak=None):
+    """
+    The stretch of rows or columns that is certainly card.
+
+    Without `weak`, first to last: all that is known yet. With it, the
+    certainly-card runs are joined only across a gap that still looks like
+    card, and the stretch carrying the most card wins. First-to-last took the
+    box out to a strip of sensor noise at the edge of the scan — a column of
+    faint 1s and 2s down the full height, certainly card against a bed that
+    reads exactly 0 — across a clean band of black between it and the card.
+    """
     lit = np.where(fraction > STRONG_LIT)[0]
-    return (int(lit[0]), int(lit[-1])) if len(lit) else None
+    if not len(lit):
+        return None
+    if weak is None:
+        return int(lit[0]), int(lit[-1])
+    runs = [[int(lit[0]), int(lit[0])]]
+    for i in lit[1:]:
+        if weak[runs[-1][1] + 1:i].all():
+            runs[-1][1] = int(i)
+        else:
+            runs.append([int(i), int(i)])
+    return tuple(max(runs, key=lambda r: fraction[r[0]:r[1] + 1].sum()))
 
 
 def _weak(fraction, reach, across):
@@ -580,8 +600,14 @@ def _card_box(m, stats=None):
     down, across = _strong(rows[0]), _strong(cols[0])
     if down is None or across is None:
         return None
-    y0, y1 = _grow(*down, _weak(*rows, across[1] - across[0] + 1))
-    x0, x1 = _grow(*across, _weak(*cols, down[1] - down[0] + 1))
+    # Twice: the first pass is only to know how long the card is on each axis,
+    # which is what decides whether a row or column still looks like card.
+    for _ in range(2):
+        weak_rows = _weak(*rows, across[1] - across[0] + 1)
+        weak_cols = _weak(*cols, down[1] - down[0] + 1)
+        down, across = _strong(rows[0], weak_rows), _strong(cols[0], weak_cols)
+    y0, y1 = _grow(*down, weak_rows)
+    x0, x1 = _grow(*across, weak_cols)
     return x0, y0, x1, y1
 
 
@@ -1162,7 +1188,11 @@ def edge_contrast(padded, background="dark"):
     box = _card_box(_mask(padded, background))
     if box is None:
         return None
-    x0, y0, x1, y1 = box
+    # Measured onto the edge, as the crops are. The located box can sit in the
+    # glow a few pixels out, and a band that is mostly backing reads as a card
+    # whose edge is as dark as the backing.
+    x0, y0, x1, y1 = _measure_box(
+        value if background == "light" else _clean_value(value), box, background)
     band = max(2, round(CONTRAST_BAND * (x1 - x0 + 1) / CARD_W))
     if x1 - x0 < band * 4 or y1 - y0 < band * 4:
         return None

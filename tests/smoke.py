@@ -785,6 +785,26 @@ def main():
               f"a navy back with a bright swirl measured {exact.size}, "
               f"not ~{(CARD_W, CARD_H)} — its border was cut off")
 
+        # ------------------------- a strip of sensor noise at the scan's edge
+        #
+        # See tests/fixtures/README.md. The front's box ran across a clean band
+        # of black to a strip of noise at the edge of the scan, and the back —
+        # measured correctly — was grown to match it, so both faces' side
+        # strips came out as nothing but backing.
+        fixtures = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
+        noisy = {}
+        for face in ("front", "back"):
+            path = os.path.join(fixtures, f"noisy-edge-{face}.jpg")
+            check(os.path.exists(path), f"the fixture is missing: {path}")
+            noisy[face] = imaging.straighten(imaging.load(path))
+        widths = {face: got[0].size[0] for face, got in noisy.items()}
+        check(abs(widths["front"] - widths["back"]) <= 6 and widths["front"] <= 752,
+              f"noisy-edge card measured {widths} — the front has run out to "
+              f"the noise at the edge of the scan")
+        gap = imaging.edge_contrast(noisy["front"][1])
+        check(gap is not None and gap[0] - gap[1] >= imaging.CONTRAST_FLOOR,
+              f"noisy-edge front's grey border read as invisible: {gap}")
+
         # ------------------------- whether the outline can be SEEN at all
         #
         # Cutting the crop in the right place and being able to read it are two
