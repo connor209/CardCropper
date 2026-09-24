@@ -77,6 +77,20 @@ straightens, crops and files. The judgement stays with you.
    crossing a near-black back is barely lit at all, but the few lit pixels it
    has reach from the top of the card to the bottom, and scanner bed never does
    that.
+
+   A sheet feeder's bed is cleaned first, because it is not black: dust on the
+   sensor draws a line down every page, and once the card has passed the
+   feeder's backing shows for the rest of it. Both clear the bar, and took the
+   card's outline out to the furthest line or down to the end of the page. A
+   line is recognised by being narrow and running top to bottom, the backing by
+   spanning the scan edge to edge from one end, so a card against the edge of
+   the scan is left alone.
+
+   Each side is then measured onto the card's actual edge, the steepest nearby
+   step in brightness, so the glow a scanner throws off a card is not counted
+   as card. On a navy back the step from border to swirl is taller than the
+   card's own edge, so any climb steep enough to be paper counts as an edge
+   even beside a taller one, or the border is measured away.
 4. **Cuts the corners and edges**, keeping a margin of background so the card's
    outline shows. A corner that has been rounded off is read from its profile
    as much as from whitening on its face. That margin is never invented: on a

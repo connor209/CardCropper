@@ -727,6 +727,64 @@ def main():
                           f"{face} glow={glow}: {name} strip is only "
                           f"{on_card:.0%} card — it has slid off the edge")
 
+        # ------------------------- a sheet feeder's bed is not black
+        #
+        # Dust on the sensor draws a line the full length of every page, the
+        # feeder's backing shows for the rest of the page once the card has
+        # passed, and the lamp throws a glow off the card to one side. All of
+        # it clears the bar. Before the bed was cleaned, a line took the box
+        # out to it and the backing took it on to the end of the page — on
+        # both faces — so every edge strip on that side was scanner bed.
+        #
+        # The artefacts are added AFTER the card is tilted, because that is
+        # how a feeder makes them: the card is skewed on the page, the sensor
+        # and the backing are not.
+        for front in (True, False):
+            face = "front" if front else "back"
+            path = os.path.join(work, f"feeder-{face}.jpg")
+            make_scan(path, front=front, angle=0.4)
+            im = imaging.load(path)
+            halo = ImageChops.offset(im.filter(ImageFilter.GaussianBlur(12)), 12, 12)
+            im = ImageChops.lighter(im, halo.point(lambda v: int(v * 0.35)))
+            a = np.asarray(im).astype(int)
+            a[:, [60, 1220, 1221, 1290], 2] += 40               # sensor lines
+            a[1610:] += (26, 13, 18)                            # feeder backing
+            path = os.path.join(work, f"feeder-{face}-dirty.jpg")
+            Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).save(path, quality=95)
+            exact, _, found, _ = imaging.straighten(imaging.load(path))
+            check(abs(exact.size[0] - CARD_W) <= 4 and abs(exact.size[1] - CARD_H) <= 4,
+                  f"{face} on a feeder's bed measured {exact.size}, "
+                  f"not ~{(CARD_W, CARD_H)}")
+            check(abs(found - 0.4) < 0.25,
+                  f"{face} on a feeder's bed deskewed {found:+.2f}°, not +0.40°")
+
+        # A card lying against the scan's border is broad and does not run end
+        # to end, so none of that may touch it: a flush-cropped card measures
+        # exactly as it did before the bed was cleaned.
+        flush_value = imaging._value(make_card(front=True))
+        check(np.array_equal(imaging._clean_value(flush_value), flush_value),
+              "cleaning the bed altered a scan with no bed in it")
+
+        # A navy back's own edge is short beside the step from its border to
+        # the brighter swirl inside, which is the tallest step in reach. Judged
+        # only against that, the card's edge did not count as a step at all,
+        # and the measurement either landed on the swirl — trimming the border
+        # off — or gave up and kept a box still wearing its glow.
+        back = Image.new("RGB", (CARD_W, CARD_H), (0, 0, 47))
+        ImageDraw.Draw(back).rectangle([36, 36, CARD_W - 37, CARD_H - 37],
+                                       fill=(40, 90, 200))
+        bed = Image.new("RGB", (1400, 1800), (0, 0, 0))
+        bed.paste(back, (200, 200))
+        bed = bed.rotate(0.4, resample=Image.BICUBIC, fillcolor=(0, 0, 0))
+        noise = np.random.default_rng(7).normal(0, 6, (1800, 1400, 3))
+        bed = Image.fromarray(np.clip(np.asarray(bed) + 8 + noise, 0, 255).astype(np.uint8))
+        path = os.path.join(work, "swirl-back.jpg")
+        bed.save(path, quality=95)
+        exact, _, _, _ = imaging.straighten(imaging.load(path))
+        check(abs(exact.size[0] - CARD_W) <= 4 and abs(exact.size[1] - CARD_H) <= 4,
+              f"a navy back with a bright swirl measured {exact.size}, "
+              f"not ~{(CARD_W, CARD_H)} — its border was cut off")
+
         # ------------------------- whether the outline can be SEEN at all
         #
         # Cutting the crop in the right place and being able to read it are two

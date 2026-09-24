@@ -65,6 +65,25 @@ BED_MARGIN = 0
 #: How much of the scan's outer border is taken to be bed when measuring it.
 BED_RING = 0.02
 
+#: How wide a sensor line can be, in pixels, and still be told apart from a
+#: card. Dust on a sheet feeder's sensor draws a line the length of every page:
+#: a column a couple of pixels wide, lit from the top of the scan to the
+#: bottom. A card is hundreds of pixels wide, so anything the scan's top and
+#: bottom borders BOTH show as a narrow bright ridge is the sensor, not paper.
+SENSOR_LINE_MAX = 12
+
+#: How far JPEG smears a sensor line into the columns either side of it.
+LINE_SMEAR = 4
+
+#: The least a stretch of rows has to read above the bed before it is taken
+#: for the feeder's backing rather than noise, and the most it can read and
+#: still be backing rather than card. Once a card has passed, a sheet feeder
+#: shows its backing for the rest of the page, and that reads brighter than the
+#: gap before the card — above the bar, so the card's box ran on down to the
+#: end of the page. It spans the scan edge to edge, which a card does not.
+BACKING_MIN = 4
+BACKING_MAX = 60
+
 #: Which way round a scan is: bed darker than the cards, or lighter.
 #:
 #: Everything here was written for a dark bed, and for a card with any ink on
@@ -166,6 +185,18 @@ EDGE_BAND = 0.25
 #: and the located outline is kept. See `clipped_edges` and `split_regions`
 #: for the two ways a side ends up with no bed outside it.
 EDGE_BED_MIN = 12
+
+#: How steep a climb, in value per pixel, is always steep enough to be an edge.
+#:
+#: Steepness is otherwise judged against the steepest climb in the window, and
+#: on a navy back that is the WRONG one: the border reads about 47, the swirl
+#: just inside it several times that, so the step from border to swirl is the
+#: tallest thing in reach and the card's own edge — bed to border, 0 to 47 —
+#: falls short of it. The measurement then either landed on the swirl, cutting
+#: the border off, or found nothing in its window and kept a box still wearing
+#: its halo. A halo climbs a few values per pixel at its steepest; paper, well
+#: over ten.
+EDGE_STEP_MIN = 8.0
 
 #: Sheet width for the labelled grading sheet, chosen to land at the 1568px
 #: an image is downscaled to before a model sees it. Four columns.
@@ -352,6 +383,92 @@ def looks_light_bedded(im):
     return bool(np.median(ring) >= LIGHT_BED_LEVEL and spread <= BED_UNIFORMITY)
 
 
+def _ridges(level):
+    """How far each position stands above its neighbourhood, where that
+    neighbourhood is wider than a sensor line — so only narrow ridges remain."""
+    n = len(level)
+    k = SENSOR_LINE_MAX * 2 + 1
+    if n < k * 2:
+        return np.zeros(n)
+    padded = np.pad(level, k // 2, mode="edge")
+    windows = np.lib.stride_tricks.sliding_window_view(padded, k)
+    return np.clip(level - np.median(windows, axis=1), 0, None)
+
+
+def _backing(level, base):
+    """
+    How far rows read above the bed where they are the feeder's backing: a
+    stretch running in from one end of the scan, reading above the bed but
+    too dim to be card. Zero everywhere else.
+    """
+    excess = level - base
+    out = np.zeros(len(level))
+    # The last few rows may be something else — a rotated scan's corner fill,
+    # a scanner's own dark rim — so the band may start a little way in.
+    slack = max(1, int(len(level) * BED_RING))
+    for rows in (slice(None), slice(None, None, -1)):   # from each end in turn
+        run = excess[rows]
+        within = (run >= BACKING_MIN) & (run <= BACKING_MAX)
+        if not within[:slack].any():
+            continue
+        start = int(np.argmax(within))
+        stop = len(run) if within[start:].all() else start + int(np.argmin(within[start:]))
+        # Half the scan at most: past that it is not backing trailing a card,
+        # it is what the card is lying on, and the bed level already has it.
+        if stop - start > slack and stop <= len(run) // 2:
+            out[rows][start:stop] = run[start:stop]
+    return out
+
+
+def _clean_value(value):
+    """
+    The value channel with a sheet feeder's two kinds of lit background taken
+    off, so the bar measures how far a pixel stands above the bed BEHIND it.
+
+    Sensor lines run down columns and show in the scan's top AND bottom border;
+    the backing runs across rows and shows in its left AND right border, at one
+    end. Both clear the bar. A line took the box out to it, and the backing took
+    it on to the end of the page, on either face — and a navy back, reading
+    little above either, is where the crops went wrong first.
+
+    Each is read from BOTH opposite borders and kept only where both see it,
+    and each is shaped the way it is on a scanner — narrow and full-length for
+    a line, a band from one end for backing — so that a card lying against the
+    scan's border, which is broad and does not reach end to end, is left alone.
+    """
+    h, w = value.shape
+    ry, rx = max(1, int(h * BED_RING)), max(1, int(w * BED_RING))
+    if h < 8 * ry or w < 8 * rx:
+        return value
+    v = value.astype(np.int16)
+    columns = np.minimum(np.median(v[:ry], axis=0), np.median(v[-ry:], axis=0))
+    rows = np.minimum(np.median(v[:, :rx], axis=1), np.median(v[:, -rx:], axis=1))
+    base = min(float(np.median(side)) for side in _border(value))
+    backing = _backing(rows, base)
+    lines = _runs(_ridges(columns) >= BACKING_MIN)
+    if not lines and not backing.any():
+        return value
+    clean = v - backing[:, None].astype(np.int16)
+    # A line is FILLED from the columns either side of it rather than having
+    # its strength subtracted. How much a line adds depends on what is under
+    # it — it hardly shows through a bright card's glow — and subtracting the
+    # full amount there digs a dark notch, which the edge measurement then
+    # takes for the card's edge. The brighter neighbour keeps card as card.
+    # Widened by LINE_SMEAR first: JPEG spreads a line into the columns beside
+    # it, below the ridge test but not below the bar.
+    for a, b in lines:
+        a, b = max(0, a - LINE_SMEAR), min(w - 1, b + LINE_SMEAR)
+        fill = np.maximum(clean[:, max(0, a - 1)], clean[:, min(w - 1, b + 1)])
+        clean[:, a:b + 1] = np.minimum(clean[:, a:b + 1], fill[:, None])
+    return np.clip(clean, 0, 255).astype(np.uint8)
+
+
+def _runs(flags):
+    """(first, last) of each run of True in a 1-D array."""
+    edges = np.diff(np.concatenate(([0], flags.astype(np.int8), [0])))
+    return list(zip(np.where(edges == 1)[0], np.where(edges == -1)[0] - 1))
+
+
 def _mask(im, background="dark"):
     """
     Card against background, at a threshold read off this scan.
@@ -366,10 +483,17 @@ def _mask(im, background="dark"):
     than the background. There is no historical bar to cap against, so the
     learned one is just held somewhere sane.
     """
-    value = _value(im)
+    return _mask_value(_value(im), background)
+
+
+def _mask_value(value, background="dark", cleaned=False):
+    """`_mask` on a value channel already in hand; `cleaned` when it has
+    already been through `_clean_value`."""
     if background == "light":
         low, high = LIGHT_LIMITS
         return value < min(high, max(low, _bed_floor(value) - BED_MARGIN))
+    if not cleaned:
+        value = _clean_value(value)
     return value > min(INK_THRESHOLD, _bed_level(value) + BED_MARGIN)
 
 
@@ -650,7 +774,7 @@ def _edge(profile, start, inward, out_span, in_span):
     peak = gradient.max()
     if peak <= 0:
         return start
-    steep = np.where(gradient >= peak * 0.4)[0]
+    steep = np.where(gradient >= min(peak * 0.4, EDGE_STEP_MIN))[0]
     i = int(steep[0]) if inward > 0 else int(steep[-1]) + 1
 
     near = max(3, (hi - lo) // 12)
@@ -771,12 +895,20 @@ def straighten(im, reference=None, background="dark"):
     # black is exactly what a card looks like.
     rotated = im.rotate(-angle, resample=Image.BICUBIC, expand=True,
                         fillcolor=_bed_fill(background))
-    box = _card_box(_mask(rotated, background))
+    # On a dark bed the background is cleaned BEFORE rotating and the cleaned
+    # map rotated with the scan: a sensor line runs down the scan's columns and
+    # the backing across its rows, not the rotated image's.
+    if background == "light":
+        value = _value(rotated)
+    else:
+        value = np.asarray(Image.fromarray(_clean_value(_value(im))).rotate(
+            -angle, resample=Image.BICUBIC, expand=True, fillcolor=0))
+    box = _card_box(_mask_value(value, background, cleaned=True))
     if box is None:
         return rotated, rotated, angle, len(measured)
     # Measured onto the card's edge BEFORE anything is compared against it: a
     # box still carrying its halo is the wrong size to match a face against.
-    box = _measure_box(_value(rotated), box, background)
+    box = _measure_box(value, box, background)
     if reference:
         box = _expand_to(box, reference, rotated.size)
     x0, y0, x1, y1 = box
