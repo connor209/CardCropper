@@ -253,6 +253,25 @@ def split_checks(work, scans):
     check(sorted(os.listdir(os.path.join(both, "Stack 1"))) == ["pair1.jpg", "pair2.jpg"]
           and os.listdir(os.path.join(both, "Stack 2")) == ["pair3.jpg"],
           "combined scans were not filed one file per card")
+    # Cropping each filed stack: its own cards, into its own folder, and
+    # never read back as scans of the stack.
+    stack_folders = [os.path.join(both, n) for n in ("Stack 1", "Stack 2")]
+    seen = []
+    written, failures = stacks.crop_stacks(
+        stack_folders, progress=lambda s, n, i, t, *rest: seen.append((s, i, t)))
+    check(not failures, f"cropping the stacks failed: {failures}")
+    check(seen == [(1, 1, 2), (1, 2, 2), (2, 1, 1)], f"crop progress was {seen}")
+    for folder, cards in zip(stack_folders, (2, 1)):
+        out = os.listdir(os.path.join(folder, stacks.CROP_FOLDER))
+        check(len(out) == cards * batch.PER_CARD,
+              f"{folder}: expected {cards} card(s) of crops, got {sorted(out)}")
+    check(len(written) == 3 * batch.PER_CARD, f"written list is {len(written)} long")
+    check(len(batch.list_images(stack_folders[0])) == 2,
+          "a stack's crops were listed as its scans")
+    stacks.remove_written(written)
+    check(not any(os.path.exists(os.path.join(f, stacks.CROP_FOLDER))
+                  for f in stack_folders), "removing the crops left their folders")
+
     face = combined.cards[0].back
     half = imaging.thumbnail(os.path.join(both, "Stack 1", "pair1.jpg"), (150, 210),
                              face.side)

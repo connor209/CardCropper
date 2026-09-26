@@ -304,6 +304,21 @@ class App(ttk.Frame):
         self.log.see("end")
         self.log.configure(state="disabled")
 
+    def crop_settings(self):
+        """
+        What this tab would crop with, for the Split tab to crop each stack by
+        — one set of crop options in the window rather than two that drift.
+        Returns (settings for `stacks.crop_stacks`, a line saying what they are).
+        """
+        style, naming, order = self._opts()
+        settings = dict(style=style, naming=naming, order=order,
+                        copy_originals=self.copy_var.get(),
+                        front=FRONT_LABELS[self.front_var.get()])
+        summary = " · ".join([self.style_var.get(), self.naming_var.get().split(" — ")[0],
+                              self.front_var.get()]
+                             + ([] if self.copy_var.get() else ["crops only"]))
+        return settings, summary
+
     def _opts(self):
         return (STYLE_LABELS[self.style_var.get()],
                 NAMING_LABELS[self.naming_var.get()],
@@ -805,7 +820,7 @@ class FoldersTab(ttk.Frame):
 def main():
     root = tk.Tk()
     root.title(APP_NAME)
-    root.geometry("1080x800")
+    root.geometry("1080x840")
     root.minsize(880, 620)
     try:
         ttk.Style().theme_use("vista" if sys.platform.startswith("win") else "clam")
@@ -826,9 +841,9 @@ def main():
     tabs.add(pages["crop"], text="Crop cards")
     tabs.add(pages["folders"], text="Scan folders")
     tabs.add(pages["split"], text="Split into stacks")
-    App(pages["crop"])
+    crop = App(pages["crop"])
     FoldersTab(pages["folders"], settings)
-    SplitTab(pages["split"])
+    SplitTab(pages["split"], crop_settings=crop.crop_settings)
     # Open on whichever tab was in use last — someone who starts the day by
     # making folders should not have to click across to them every time.
     if settings.get("tab") in pages:

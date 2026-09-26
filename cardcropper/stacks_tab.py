@@ -22,7 +22,7 @@ from PIL import ImageTk
 from . import batch, imaging, stacks
 from .gui import APP_NAME, BACKGROUND_LABELS, SPLIT_LABELS, _reveal
 
-THUMB = (124, 174)
+THUMB = (110, 154)
 
 #: How many thumbnails to keep decoded. Paging back and forth across a break is
 #: the common move and should be instant; holding every card in a 500-card run
@@ -31,7 +31,11 @@ THUMB_CACHE = 48
 
 
 class SplitTab(ttk.Frame):
-    def __init__(self, master):
+    def __init__(self, master, crop_settings=None):
+        """
+        `crop_settings()` returns the Crop tab's settings and a line describing
+        them — see `App.crop_settings`. Without it, cropping is not offered.
+        """
         super().__init__(master, padding=10)
         self.grid(sticky="nsew")
         master.columnconfigure(0, weight=1)
@@ -51,6 +55,10 @@ class SplitTab(ttk.Frame):
         self.current = 1                # the break on screen: stack k starts here
         self.checked = set()            # breaks the operator has confirmed
         self.last_moves = []
+        self.last_written = []          # crops written, so Undo can take them too
+        self.crop_settings = crop_settings
+        self.stop_flag = threading.Event()
+        self.cropped = 0
         self.thumbs = {}
         self.events = queue.Queue()
         self.worker = None
@@ -183,6 +191,22 @@ class SplitTab(ttk.Frame):
                        "{first} {last} card numbers · {count} cards · {n:03d} = 001")\
             .grid(row=3, column=0, columnspan=3, sticky="w")
 
+        # Off by default: filing is quick, cropping five hundred cards is not,
+        # and the breaks being right is worth knowing before committing to it.
+        self.crop_var = tk.BooleanVar(value=False)
+        crop = ttk.Frame(box)
+        crop.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        ttk.Checkbutton(crop, variable=self.crop_var, command=self._refresh_crop,
+                        text=f"Crop each stack once it is filed, into a "
+                             f"'{stacks.CROP_FOLDER}' folder inside it",
+                        state="normal" if self.crop_settings else "disabled")\
+            .pack(anchor="w")
+        self.crop_summary = ttk.Label(crop, foreground="#666")
+        self.crop_summary.pack(anchor="w", padx=(22, 0))
+        # The settings live on the Crop tab and can change while this one is
+        # hidden, so the line saying what they are is redrawn on the way back.
+        self.bind("<Map>", lambda _e: self._refresh_crop())
+
     def _build_run(self):
         bar = ttk.Frame(self)
         bar.grid(row=4, column=0, sticky="ew", pady=(10, 0))
@@ -215,6 +239,15 @@ class SplitTab(ttk.Frame):
         self.log.insert("end", text + "\n")
         self.log.see("end")
         self.log.configure(state="disabled")
+
+    def _refresh_crop(self):
+        if not self.crop_settings:
+            self.crop_summary.configure(text="")
+            return
+        _, summary = self.crop_settings()
+        self.crop_summary.configure(
+            text=f"With the Crop cards tab's settings: {summary}"
+            if self.crop_var.get() else "")
 
     def _names(self):
         """Folder names, or None with the reason shown where the preview goes."""
@@ -392,6 +425,7 @@ class SplitTab(ttk.Frame):
         self.filing = False
         self.checked.clear()
         self.last_moves = []
+        self.last_written = []
         self.undo_btn.configure(state="disabled")
         self.current = 1
         self.progress.configure(value=0)
@@ -469,6 +503,11 @@ class SplitTab(ttk.Frame):
 
     def start(self):
         if self.worker and self.worker.is_alive():
+            # Only the cropping stops part-way. Filing is a card-by-card move
+            # that is over in moments, and stopping it would leave the one
+            # state a split tries hardest to avoid.
+            self.stop_flag.set()
+            self._say("Stopping after the card being cropped…")
             return
         dest = self.dest_var.get().strip()
         if not dest:
@@ -487,20 +526,46 @@ class SplitTab(ttk.Frame):
             return
 
         plan, template = self.plan, self.name_var.get()
+        crop = self.crop_settings()[0] if self.crop_var.get() and self.crop_settings \
+            else None
+        stack_folders = [os.path.join(dest, n) for n in stacks.folder_names(plan, template)]
+        split, background = SPLIT_LABELS[self.split_var.get()], self._background()
         self.filing = True
+        self.cropped = 0
+        self.stop_flag.clear()
         total = len(plan.cards)
         self.progress.configure(maximum=total, value=0)
         self.run_btn.configure(state="disabled")
         self._say(f"\nFiling {total} card(s) into {len(plan)} folder(s) in {dest}")
+        if crop:
+            self._say(f"  then cropping each, {self.crop_settings()[1]}")
 
         def work():
             try:
                 moves = stacks.apply(plan, dest, template,
                                      progress=lambda d, t: self.events.put(("card", d)))
-                self.events.put(("finished", moves, None))
             except stacks.SplitFailed as exc:
-                self.events.put(("finished", exc.moves, exc))
+                self.events.put(("finished", exc.moves, exc, [], []))
+                return
             except Exception:                               # noqa: BLE001
+                self.events.put(("crashed", traceback.format_exc()))
+                return
+            if not crop:
+                self.events.put(("finished", moves, None, [], []))
+                return
+            self.events.put(("cropping",))
+            # The scans were examined before they moved; ask under the name
+            # they were examined as rather than reading them all again.
+            was = {dst: src for src, dst in moves}
+            try:
+                written, failures = stacks.crop_stacks(
+                    stack_folders, split=split, background=background,
+                    probe=lambda p: self._probe(was.get(p, p)),
+                    progress=lambda *_: self.events.put(("cropped",)),
+                    should_stop=self.stop_flag.is_set, **crop)
+                self.events.put(("finished", moves, None, written, failures))
+            except Exception:                               # noqa: BLE001
+                self.events.put(("finished", moves, None, [], []))
                 self.events.put(("crashed", traceback.format_exc()))
 
         self.worker = threading.Thread(target=work, daemon=True)
@@ -509,6 +574,12 @@ class SplitTab(ttk.Frame):
     def undo(self):
         if not self.last_moves:
             return
+        if self.last_written:
+            # The crops first: a stack folder still holding them is not empty,
+            # and would be left behind when its scans went back.
+            stacks.remove_written(self.last_written)
+            self._say(f"Removed the {len(self.last_written)} cropped file(s) written.")
+            self.last_written = []
         stuck = stacks.undo(self.last_moves)
         self._say(f"Undone: {len(self.last_moves) - len(stuck)} scan(s) moved back.")
         for src, dst, exc in stuck:
@@ -523,10 +594,19 @@ class SplitTab(ttk.Frame):
                 event = self.events.get_nowait()
                 if event[0] in ("card", "examining"):
                     self.progress.configure(value=event[1])
+                elif event[0] == "cropping":
+                    self._say("Filed. Cropping…")
+                    self.progress.configure(value=0)
+                    self.run_btn.configure(state="normal", text="Stop")
+                elif event[0] == "cropped":
+                    self.cropped += 1
+                    self.progress.configure(value=self.cropped)
                 elif event[0] == "planned":
                     self._planned(event[1])
                 elif event[0] == "finished":
-                    _, moves, err = event
+                    _, moves, err, written, failures = event
+                    self.last_written += written
+                    self.run_btn.configure(text="Create folders & move scans")
                     # Added to, not replaced: a run picked up after a failure
                     # should undo as one with the part that went first.
                     self.last_moves += moves
@@ -540,9 +620,25 @@ class SplitTab(ttk.Frame):
                                   "them back.")
                         messagebox.showerror(APP_NAME, f"The split stopped part-way.\n\n{err}")
                     else:
-                        self._say(f"Done: {len(self.plan.cards)} card(s) in "
-                                  f"{len(self.plan)} folder(s). Each is ready for the "
-                                  f"Crop cards tab.")
+                        if written or failures:
+                            self._say(f"Done: {len(self.plan.cards)} card(s) filed into "
+                                      f"{len(self.plan)} folder(s), {self.cropped} "
+                                      f"cropped" + (f", {len(failures)} failed"
+                                                    if failures else "")
+                                      + (" (stopped early)" if self.stop_flag.is_set()
+                                         else "") + ".")
+                            # Again at the end, as the Crop tab does: in a run
+                            # of five hundred the failures have long scrolled
+                            # away, and they are the lines to act on.
+                            if failures:
+                                self._say("Cards to crop again:")
+                            for folder, i, card, exc in failures:
+                                self._say(f"  {os.path.basename(folder)}, card {i}: "
+                                          f"{card.front.name} + {card.back.name} — {exc}")
+                        else:
+                            self._say(f"Done: {len(self.plan.cards)} card(s) in "
+                                      f"{len(self.plan)} folder(s). Each is ready for "
+                                      f"the Crop cards tab.")
                         # The run's paths now point at files that have moved.
                         self.filing = False
                         self.sources = list(self.plan.leftover)

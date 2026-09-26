@@ -401,6 +401,16 @@ run into one folder per stack.
    its back — and if a move fails part-way, running it again carries on into
    the same folders; **Undo** puts every scan back where it was.
 
+**Crop each stack once it is filed** does the Crop tab's job on every stack
+straight after filing it, into a `cropped` folder inside each stack's folder —
+where the Crop tab would put it. It uses whatever is set on the Crop cards tab
+(crops, naming, order, front, photos too), shown under the checkbox, so there
+is one set of crop options rather than two. Each stack is paired and has its
+front worked out from its own folder, exactly as cropping that folder by hand
+would. **Stop** stops the cropping between cards — the filing is already done
+by then — and **Undo** takes away the crops as well as putting the scans back.
+Cards that fail are listed at the end, stack by stack.
+
 A scan left without a partner is named in red and left where it is.
 
 From the command line there is no walk through the breaks, so look at
@@ -409,11 +419,14 @@ From the command line there is no walk through the breaks, so look at
 ```
 CardCropper.exe --stacks "D:\Scans\big run" --per 50 --dry-run
 CardCropper.exe --stacks "D:\Scans\big run" --per 50
+CardCropper.exe --stacks "D:\Scans\big run" --per 50 --crop --style listing
 ```
 
 `--split` and `--background` are as for `--cli`; `--into` puts the folders
 somewhere other than beside the run; `--start` sets the first number, which is
-how a stopped run is resumed into the same folders.
+how a stopped run is resumed into the same folders. `--crop` crops each stack
+once filed, taking `--style`, `--naming`, `--order`, `--front` and
+`--no-originals` as `--cli` does.
 
 ## From the command line
 
@@ -492,4 +505,6 @@ second writing over the first.
 For splitting a run into stacks: that each stack folder pairs back into the
 cards it was cut from, a scan holding both faces moving as its one file, that
 the folders are numbered on from the day's, that a clash moves nothing, that a
-failure never leaves half a card filed, and that undo puts everything back.
+failure never leaves half a card filed, that cropping the stacks writes each
+stack's own cards into its own folder without them being read back as scans,
+and that undo puts everything back.

@@ -282,3 +282,66 @@ def undo(moves):
         except OSError:
             pass
     return stuck
+
+
+#: Where a stack's crops go: a folder inside the stack's own, which is where
+#: the Crop tab would put them by default. Inside rather than beside, so the
+#: day's folder list stays one folder per stack; and `batch.list_images` reads
+#: only the files directly in a folder, so the crops are never read back as
+#: scans of the stack.
+CROP_FOLDER = "cropped"
+
+
+def crop_stacks(stack_folders, split="auto", front="auto", background="dark",
+                probe=None, progress=None, should_stop=None, **run_opts):
+    """
+    Crop each filed stack into its own CROP_FOLDER, as the Crop tab would.
+
+    Each stack is paired afresh from its folder rather than reusing the split's
+    pairing, so the result is exactly what cropping that folder by hand gives —
+    including working out the front from the stack's own cards, which the
+    split does not need to and so does not do.
+
+    `run_opts` are `batch.run`'s (style, naming, order, copy_originals).
+    `progress(stack, stacks, i, total, card, names, notes, err)` is called per
+    card. A stack whose cards fail does not stop the others, as in the Crop
+    tab. Returns (written, failures): every file written, so a caller can take
+    them away again, and (folder, index, card, error) for each failed card.
+    """
+    written, failures = [], []
+    for s, folder in enumerate(stack_folders, 1):
+        if should_stop is not None and should_stop():
+            break
+        plan = batch.plan_scans(batch.list_images(folder), split=split, front=front,
+                                probe=probe, background=background)
+        out = os.path.join(folder, CROP_FOLDER)
+
+        def report(i, total, card, names, notes, err, s=s, out=out):
+            written.extend(os.path.join(out, n) for n in names)
+            if progress:
+                progress(s, len(stack_folders), i, total, card, names, notes, err)
+
+        _, _, failed = batch.run(plan, out, background=background, progress=report,
+                                 should_stop=should_stop, **run_opts)
+        failures.extend((folder, i, card, exc) for i, card, exc in failed)
+    return written, failures
+
+
+def remove_written(paths):
+    """
+    Delete files a crop run wrote, and any CROP_FOLDER left empty by it — for
+    an undo, which has to take the crops away with the scans or leave stack
+    folders behind holding crops of cards that are no longer in them.
+    """
+    folders_ = set()
+    for path in paths:
+        try:
+            os.remove(path)
+            folders_.add(os.path.dirname(path))
+        except OSError:
+            pass
+    for folder in folders_:
+        try:
+            os.rmdir(folder)
+        except OSError:
+            pass

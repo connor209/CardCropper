@@ -186,6 +186,15 @@ def split_main():
                     help="as for --cli: what the cards were laid on (default: dark)")
     ap.add_argument("--dry-run", action="store_true",
                     help="show where the breaks fall and move nothing")
+    crop = ap.add_argument_group(
+        "cropping", f"--crop crops each stack into a '{stacks.CROP_FOLDER}' folder "
+                    "inside it once filed; the rest are as for --cli")
+    crop.add_argument("--crop", action="store_true")
+    crop.add_argument("--style", choices=sorted(imaging.STYLES), default="grading")
+    crop.add_argument("--naming", choices=batch.NAMING, default="grouped")
+    crop.add_argument("--order", choices=sorted(batch.ORDERS), default="crops-last")
+    crop.add_argument("--front", choices=batch.FRONTS, default="auto")
+    crop.add_argument("--no-originals", action="store_true")
     args = ap.parse_args()
 
     folder = os.path.abspath(args.folder)
@@ -224,7 +233,27 @@ def split_main():
     except ValueError as exc:
         sys.exit(f"nothing moved: {exc}")
     print(f"\n{len(plan.cards)} card(s) filed into {len(names)} folder(s) in {dest}")
-    return 0
+    if not args.crop:
+        return 0
+
+    def report(s, stacks_total, i, total, card, names_, notes, err):
+        where = f"[{names[s - 1]} {i}/{total}]"
+        if err:
+            print(f"{where} FAILED {card.front.name}: {err}")
+        elif notes:
+            print(f"{where} " + "; ".join(notes))
+
+    print("cropping…")
+    _, failures = stacks.crop_stacks(
+        [os.path.join(dest, n) for n in names], split=args.split, front=args.front,
+        background=args.background, progress=report, style=args.style,
+        naming=args.naming, order=args.order, copy_originals=not args.no_originals)
+    print(f"{len(plan.cards) - len(failures)} card(s) cropped"
+          + (f", {len(failures)} failed" if failures else ""))
+    for stack_folder, i, card, exc in failures:
+        print(f"  {os.path.basename(stack_folder)}, card {i}: {card.front.name} + "
+              f"{card.back.name} — {exc}", file=sys.stderr)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
