@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, ttk
 from PIL import ImageTk
 
 from . import batch, imaging, stacks
-from .gui import APP_NAME, _reveal
+from .gui import APP_NAME, BACKGROUND_LABELS, SPLIT_LABELS, _reveal
 
 THUMB = (124, 174)
 
@@ -33,11 +33,21 @@ THUMB_CACHE = 48
 class SplitTab(ttk.Frame):
     def __init__(self, master):
         super().__init__(master, padding=10)
+        self.grid(sticky="nsew")
+        master.columnconfigure(0, weight=1)
+        master.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=1)
         self.rowconfigure(6, weight=1)
 
+        self.sources = []               # every scan added, planned as one run
         self.plan = stacks.StackPlan()
+        self.planner = None
+        self.probed = {}
+        # Set once filing starts, and the folder numbers stay put until the run
+        # is done or thrown away: the first stack's own folder would otherwise
+        # count as already there, and a resumed run would renumber past it.
+        self.filing = False
         self.current = 1                # the break on screen: stack k starts here
         self.checked = set()            # breaks the operator has confirmed
         self.last_moves = []
@@ -55,8 +65,10 @@ class SplitTab(ttk.Frame):
     # ------------------------------------------------------------ layout
 
     def _build_sources(self):
-        bar = ttk.Frame(self)
-        bar.grid(row=0, column=0, sticky="ew")
+        top = ttk.Frame(self)
+        top.grid(row=0, column=0, sticky="ew")
+        bar = ttk.Frame(top)
+        bar.pack(fill="x")
         ttk.Button(bar, text="Add folder…", command=self.add_folder).pack(side="left")
         ttk.Button(bar, text="Add scans…", command=self.add_files).pack(side="left", padx=(6, 0))
         ttk.Button(bar, text="Clear", command=self.clear).pack(side="left", padx=(6, 0))
@@ -66,9 +78,22 @@ class SplitTab(ttk.Frame):
         ttk.Spinbox(bar, from_=1, to=1000, width=5, textvariable=self.per_var)\
             .pack(side="left", padx=(4, 4))
         ttk.Button(bar, text="Re-cut", command=self.recut).pack(side="left")
+        bar = ttk.Frame(top)
+        bar.pack(fill="x", pady=(6, 0))
+        ttk.Label(bar, text="Scans").pack(side="left", padx=(0, 4))
+        # The same two choices the Crop tab pairs by, so a stack folder pairs
+        # there into the cards it was cut as here.
+        self.split_var = tk.StringVar(value=list(SPLIT_LABELS)[0])
+        self.bg_var = tk.StringVar(value=list(BACKGROUND_LABELS)[0])
+        for var, options, width in ((self.split_var, SPLIT_LABELS, 30),
+                                    (self.bg_var, BACKGROUND_LABELS, 20)):
+            cb = ttk.Combobox(bar, textvariable=var, values=list(options),
+                              state="readonly", width=width)
+            cb.pack(side="left", padx=(0, 6))
+            cb.bind("<<ComboboxSelected>>", lambda _e: self._replan())
 
         self.hint = ttk.Label(self, foreground="#666")
-        self.hint.grid(row=1, column=0, sticky="w", pady=(8, 4))
+        self.hint.grid(row=1, column=0, sticky="w", pady=(6, 4))
 
     def _build_body(self):
         body = ttk.Frame(self)
@@ -141,6 +166,7 @@ class SplitTab(ttk.Frame):
 
         ttk.Label(box, text="Create in").grid(row=0, column=0, sticky="w")
         self.dest_var = tk.StringVar()
+        self.dest_var.trace_add("write", lambda *_: self._refresh_names())
         ttk.Entry(box, textvariable=self.dest_var).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(box, text="Browse…", command=self.pick_dest).grid(row=0, column=2)
 
@@ -153,8 +179,8 @@ class SplitTab(ttk.Frame):
         self.preview = ttk.Label(box, foreground="#666")
         self.preview.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Label(box, foreground="#888",
-                  text="{n} stack number · {first} {last} card numbers · {count} cards "
-                       "in it · {n:02d} pads to two digits")\
+                  text="{date} YY.MM.DD · {n} stack number, on from the day's folders · "
+                       "{first} {last} card numbers · {count} cards · {n:03d} = 001")\
             .grid(row=3, column=0, columnspan=3, sticky="w")
 
     def _build_run(self):
@@ -192,6 +218,9 @@ class SplitTab(ttk.Frame):
 
     def _names(self):
         """Folder names, or None with the reason shown where the preview goes."""
+        dest = self.dest_var.get().strip()
+        if not self.filing and dest:
+            self.plan.number_from(dest, self.name_var.get())
         try:
             return stacks.folder_names(self.plan, self.name_var.get())
         except ValueError as exc:
@@ -229,7 +258,7 @@ class SplitTab(ttk.Frame):
                 foreground="#b3261e",
                 text=f"{len(self.plan.leftover)} scan(s) without a partner, left where "
                      "they are: " + ", ".join(os.path.basename(p) for p in self.plan.leftover)
-                     + " — an odd number of scans means a front or back is missing.")
+                     + " — a front or back is missing.")
         elif n:
             breaks = len(self.plan) - 1
             self.hint.configure(
@@ -250,24 +279,29 @@ class SplitTab(ttk.Frame):
         except ValueError:
             return stacks.PER_STACK
 
-    def _thumb(self, path):
-        if path not in self.thumbs:
+    def _background(self):
+        return BACKGROUND_LABELS[self.bg_var.get()]
+
+    def _thumb(self, face):
+        key = (face.path, face.side, self._background())
+        if key not in self.thumbs:
             if len(self.thumbs) >= THUMB_CACHE:
                 self.thumbs.pop(next(iter(self.thumbs)))
             try:
-                self.thumbs[path] = ImageTk.PhotoImage(imaging.thumbnail(path, THUMB))
+                self.thumbs[key] = ImageTk.PhotoImage(imaging.thumbnail(
+                    face.path, THUMB, face.side, self._background()))
             except Exception:                               # noqa: BLE001
-                self.thumbs[path] = None
-        return self.thumbs[path]
+                self.thumbs[key] = None
+        return self.thumbs[key]
 
     def _show_card(self, side, title, card):
         box, faces = self.sides[side]
         box.configure(text=title)
-        for (pic, name), path in zip(faces, (card.front, card.back) if card else (None, None)):
-            img = self._thumb(path) if path else None
-            pic.configure(image=img or "", text="" if img or not path else "cannot open")
+        for (pic, name), face in zip(faces, (card.front, card.back) if card else (None, None)):
+            img = self._thumb(face) if face else None
+            pic.configure(image=img or "", text="" if img or not face else "cannot open")
             pic.image = img
-            name.configure(text=os.path.basename(path) if path else "")
+            name.configure(text=face.name if face else "")
 
     def _show_break(self):
         plan, k = self.plan, self.current
@@ -309,17 +343,64 @@ class SplitTab(ttk.Frame):
     def _load(self, paths):
         if not paths:
             return
-        paths = list(paths) + [p for c in self.plan.cards for p in (c.front, c.back)]
-        paths += self.plan.leftover
-        self.plan = stacks.plan_stacks(sorted(set(paths), key=batch.natural_key), self._per())
+        self.sources = sorted(set(self.sources) | set(paths), key=batch.natural_key)
+        if not self.dest_var.get():
+            # Beside the run's folder rather than inside it, which is where the
+            # Scan folders tab puts the day's folders too.
+            self.dest_var.set(os.path.dirname(os.path.dirname(os.path.abspath(paths[0]))))
+        self._replan()
+
+    def _probe(self, path):
+        """imaging.probe, remembered, as the Crop tab does it."""
+        key = (path, self._background())
+        if key not in self.probed:
+            self.probed[key] = imaging.probe(path, key[1])
+        return self.probed[key]
+
+    def _replan(self):
+        """
+        Pair and cut the run afresh. Throws away checked breaks and nudges —
+        the cards they were checked against may not be the cards any more.
+        """
+        if not self.sources or (self.planner and self.planner.is_alive()):
+            return
+        split = SPLIT_LABELS[self.split_var.get()]
+        args = dict(per_stack=self._per(), split=split, background=self._background(),
+                    probe=self._probe)
+        if split != "auto":
+            self._planned(stacks.plan_stacks(self.sources, **args))
+            return
+        self._say("Examining scans…")
+        self.run_btn.configure(state="disabled")
+        self.progress.configure(maximum=len(self.sources), value=0)
+        sources = list(self.sources)
+
+        def work():
+            try:
+                plan = stacks.plan_stacks(
+                    sources, progress=lambda i, n, p: self.events.put(("examining", i)),
+                    **args)
+                self.events.put(("planned", plan))
+            except Exception:                               # noqa: BLE001
+                self.events.put(("crashed", traceback.format_exc()))
+
+        self.planner = threading.Thread(target=work, daemon=True)
+        self.planner.start()
+
+    def _planned(self, plan):
+        self.plan = plan
+        self.filing = False
         self.checked.clear()
         self.last_moves = []
         self.undo_btn.configure(state="disabled")
         self.current = 1
-        if not self.dest_var.get() and self.plan.cards:
-            self.dest_var.set(os.path.dirname(self.plan.cards[0].front))
-        self._say(f"{len(self.plan.cards)} card(s) from {len(paths)} scan(s), "
-                  f"cut into {len(self.plan)} stack(s) of {self._per()}.")
+        self.progress.configure(value=0)
+        combined = sum(1 for c in plan.cards if c.combined)
+        self._say(f"{len(plan.cards)} card(s) from {len(self.sources)} scan(s), "
+                  f"cut into {len(plan)} stack(s) of {self._per()}."
+                  + (f" {combined} have both faces on one scan." if combined else ""))
+        for note in plan.notes:
+            self._say("  " + note)
         self._refresh()
 
     def add_folder(self):
@@ -334,6 +415,8 @@ class SplitTab(ttk.Frame):
                        ("All files", "*.*")]))
 
     def clear(self):
+        self.sources = []
+        self.filing = False
         self.plan = stacks.StackPlan()
         self.checked.clear()
         self.current = 1
@@ -404,6 +487,7 @@ class SplitTab(ttk.Frame):
             return
 
         plan, template = self.plan, self.name_var.get()
+        self.filing = True
         total = len(plan.cards)
         self.progress.configure(maximum=total, value=0)
         self.run_btn.configure(state="disabled")
@@ -430,14 +514,17 @@ class SplitTab(ttk.Frame):
         for src, dst, exc in stuck:
             self._say(f"  could not move back {dst}: {exc}")
         self.last_moves = []
+        self.filing = False
         self.undo_btn.configure(state="disabled")
 
     def _poll(self):
         try:
             while True:
                 event = self.events.get_nowait()
-                if event[0] == "card":
+                if event[0] in ("card", "examining"):
                     self.progress.configure(value=event[1])
+                elif event[0] == "planned":
+                    self._planned(event[1])
                 elif event[0] == "finished":
                     _, moves, err = event
                     # Added to, not replaced: a run picked up after a failure
@@ -448,21 +535,23 @@ class SplitTab(ttk.Frame):
                     self.open_btn.configure(state="normal")
                     if err:
                         self._say(f"Stopped: {err}")
-                        self._say(f"{len(self.last_moves) // 2} card(s) were filed before "
-                                  "it stopped. Run it again to carry on, or Undo to put "
+                        self._say(f"{err.card_index} card(s) were filed before it "
+                                  "stopped. Run it again to carry on, or Undo to put "
                                   "them back.")
                         messagebox.showerror(APP_NAME, f"The split stopped part-way.\n\n{err}")
                     else:
-                        sizes = self.plan.sizes()
-                        self._say(f"Done: {len(self.last_moves) // 2} card(s) in {len(sizes)} "
-                                  f"folder(s). Each is ready for the Crop cards tab.")
+                        self._say(f"Done: {len(self.plan.cards)} card(s) in "
+                                  f"{len(self.plan)} folder(s). Each is ready for the "
+                                  f"Crop cards tab.")
                         # The run's paths now point at files that have moved.
+                        self.filing = False
+                        self.sources = list(self.plan.leftover)
                         self.plan = stacks.StackPlan(leftover=self.plan.leftover)
                         self.checked.clear()
                         self.thumbs.clear()
                         self._refresh()
                 elif event[0] == "crashed":
-                    self.run_btn.configure(state="normal")
+                    self.run_btn.configure(state="normal" if self.plan.cards else "disabled")
                     self._say(event[1])
                     messagebox.showerror(APP_NAME, "The split stopped unexpectedly. "
                                                    "See the log for details.")
