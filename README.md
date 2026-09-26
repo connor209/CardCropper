@@ -150,10 +150,18 @@ Double-click `CardCropper.bat` (or `CardCropper.exe`).
    **Swap front/back**, which swaps the two halves of a combined scan just as
    it swaps two files; where the run is off by one, remove the offender. A file
    left over is called out in red rather than folded into a card.
-3. **Pick an output folder.** It must not be a folder the scans came from — the
+3. **Check the output folder.** It is filled in as a `cropped` folder beside
+   the scans you added. It must not be a folder the scans came from — the
    crops would be read back as scans on the next run and paired into the batch.
    The app refuses that rather than letting it happen quietly.
 4. **Crop cards.**
+
+Then add the next folder of scans. It starts a new batch — the cards just
+cropped are not carried into it — and the output moves to a `cropped` folder
+beside the new scans, so a day of `26.09.26 - 001`, `- 002`, … is cropped one
+folder at a time without browsing for the output each time. An output folder
+you pick with **Browse…** or type in yourself stays put instead; clear the box
+to hand it back to the scans.
 
 ### Backs too dark to find their own edge
 
@@ -324,6 +332,9 @@ The numbering carries on by itself. Crop twelve cards into `cropped`, come back
 with another eight, point the app at the same folder, and they are written as
 `0013` to `0020` — the line under the options says so before you press Crop,
 and the table shows each row's real filenames.
+
+Because the output normally follows the scans, pick the shared folder with
+**Browse…** for this — a folder chosen by hand is kept from batch to batch.
 
 The next number is read back from the filenames rather than from a counter kept
 somewhere, because the folder is the thing you edit: cards get deleted,

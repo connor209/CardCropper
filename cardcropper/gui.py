@@ -115,6 +115,17 @@ class App(ttk.Frame):
         #: The last output folder the table was drawn for, so that typing a
         #: path does not re-read the folder on every keystroke.
         self._last_out = None
+        #: Whether the output folder was chosen by hand. Until it is, it
+        #: follows the scans: each Add points it at a `cropped` folder beside
+        #: them, so a day of numbered scan folders is cropped folder by folder
+        #: without re-browsing each time. A folder picked by hand stays put, so
+        #: several batches can still be cropped into one on purpose; emptying
+        #: the box hands it back to the scans.
+        self._out_chosen = False
+        self._setting_out = False
+        #: Set once a crop finishes. The next Add then starts a new batch
+        #: instead of adding to one that has already been written.
+        self._cropped = False
         self.events = queue.Queue()
         self.worker = None
         self.planner = None
@@ -257,6 +268,7 @@ class App(ttk.Frame):
         # every keystroke would be a listdir per character over a cloud drive,
         # so a path is only read once it names a folder that exists.
         self.out_var.trace_add("write", lambda *_a: self._out_changed())
+        self.out_var.trace_add("write", lambda *_a: self._out_typed())
 
     def _build_run(self):
         bar = ttk.Frame(self)
@@ -301,6 +313,18 @@ class App(ttk.Frame):
         if not self.continue_var.get():
             return 1
         return batch.next_index(self.out_var.get().strip())
+
+    def _set_out(self, folder):
+        """Set the output folder without it counting as chosen by hand."""
+        self._setting_out = True
+        try:
+            self.out_var.set(folder)
+        finally:
+            self._setting_out = False
+
+    def _out_typed(self):
+        if not self._setting_out:
+            self._out_chosen = bool(self.out_var.get().strip())
 
     def _out_changed(self):
         """Redraw when the output folder becomes one that exists — see above."""
@@ -381,6 +405,16 @@ class App(ttk.Frame):
     def _adopt(self, paths):
         if not paths:
             return
+        if self._cropped:
+            # The table is still showing the batch that was just written. The
+            # new scans are the next batch, not more of that one — keeping the
+            # old rows would crop them all over again, into the new folder.
+            self._say("\nStarting a new batch.")
+            self.cards, self.leftover, self.batches = [], [], []
+            self._cropped = False
+        if not self._out_chosen:
+            self._set_out(os.path.join(os.path.dirname(os.path.abspath(paths[0])),
+                                       "cropped"))
         self.batches.append(list(paths))
         self._replan(added=len(paths))
 
@@ -427,9 +461,6 @@ class App(ttk.Frame):
         self._busy(False)
         self.cards = [c for plan in plans for c in plan.cards]
         self.leftover = [p for plan in plans for p in plan.leftover]
-        if not self.out_var.get() and self.cards:
-            self.out_var.set(os.path.join(
-                os.path.dirname(self.cards[0].front.path), "cropped"))
         combined = sum(1 for c in self.cards if c.combined)
         files = sum(len(b) for b in self.batches)
         what = f"Added {len(plans[-1].cards)} card(s) from {added} file(s)." \
@@ -623,12 +654,15 @@ class App(ttk.Frame):
                     # the line under the options says where the next batch
                     # would land. Adding more scans redraws it properly.
                     self._last_out = None
+                    self._cropped = True
                     held = batch.next_index(self.out_var.get().strip()) - 1
                     if held:
+                        nxt = (f"The next scans you add go in here too, from "
+                               f"{held + 1:04d}." if self._out_chosen else
+                               "The next scans you add go in a 'cropped' folder "
+                               "beside them.")
                         self.preview.configure(
-                            text=f"Output folder now holds {held} card(s). Add the "
-                                 f"next batch of scans and it will carry on from "
-                                 f"{held + 1:04d}.")
+                            text=f"Output folder now holds {held} card(s). {nxt}")
                     self.open_btn.configure(state="normal")
                     self._say(f"Done: {done} card(s) written"
                               + (f", {failed} failed" if failed else "")
