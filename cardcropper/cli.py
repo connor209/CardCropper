@@ -10,7 +10,7 @@ import argparse
 import os
 import sys
 
-from . import batch, imaging
+from . import batch, imaging, stacks
 
 
 def main():
@@ -74,6 +74,58 @@ def main():
         print(f"  card {i}: {os.path.basename(card.front)} + "
               f"{os.path.basename(card.back)} — {exc}", file=sys.stderr)
     return 1 if failed else 0
+
+
+def split_main():
+    """
+    File one long run into a folder per stack, cutting every --per cards.
+
+    There is no walk through the breaks here — that needs the pictures. Use
+    --dry-run to see where each break falls first; the window is the place to
+    check them against the pile.
+    """
+    ap = argparse.ArgumentParser(
+        prog="cardcropper --split",
+        description="Split a long scanning run into a folder per stack of cards.")
+    ap.add_argument("folder", help="the folder the scanner wrote the whole run to")
+    ap.add_argument("--per", type=int, default=stacks.PER_STACK,
+                    help=f"cards per stack (default: {stacks.PER_STACK})")
+    ap.add_argument("--name", default=stacks.TEMPLATE,
+                    help="folder name; {n} stack number, {first} {last} card "
+                         f"numbers, {{count}} cards in it (default: {stacks.TEMPLATE!r})")
+    ap.add_argument("--into", help="where to create the folders (default: FOLDER)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="show where the breaks fall and move nothing")
+    args = ap.parse_args()
+
+    plan = stacks.plan_stacks(batch.list_images(args.folder), args.per)
+    if not plan.cards:
+        sys.exit("no cards found — a card needs two scans")
+    for w in batch.Plan(leftover=plan.leftover).warnings:
+        print(f"warning: {w} — left where they are", file=sys.stderr)
+    try:
+        names = stacks.folder_names(plan, args.name)
+    except ValueError as exc:
+        sys.exit(str(exc))
+
+    for k, name in enumerate(names):
+        cards = plan.stack(k)
+        print(f"{name}: cards {plan.span(k)[0] + 1}–{plan.span(k)[1]} ({len(cards)})   "
+              f"{os.path.basename(cards[0].front)} … {os.path.basename(cards[-1].back)}")
+    if args.dry_run:
+        return 0
+
+    dest = args.into or args.folder
+    try:
+        moves = stacks.apply(plan, dest, args.name)
+    except stacks.SplitFailed as exc:
+        print(f"\n{exc}. {len(exc.moves) // 2} card(s) were filed first; run the "
+              "same command again to carry on.", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        sys.exit(f"nothing moved: {exc}")
+    print(f"\n{len(moves) // 2} card(s) filed into {len(names)} folder(s) in {dest}")
+    return 0
 
 
 if __name__ == "__main__":

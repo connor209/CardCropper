@@ -4,8 +4,10 @@ The CardCropper window.
 Tkinter on purpose: it ships with CPython, so the frozen .exe needs no
 third-party UI toolkit and stays one file a person can double-click.
 
-The whole design is one screen. Add scans, look at how they paired, fix the
-pairs that are wrong, press Crop. There is no wizard because there is only one
+Two tabs: Split files a long scanning run into a folder per stack (see
+`stacks_tab`), and Crop works on one of those folders. The Crop tab is one
+screen. Add scans, look at how they paired, fix the pairs that are wrong,
+press Crop. There is no wizard because there is only one
 decision on it worth pausing over — whether the front and back on each row
 belong to the same card — and a wizard would hide exactly that behind a step.
 """
@@ -57,9 +59,6 @@ def _reveal(path):
 class App(ttk.Frame):
     def __init__(self, master):
         super().__init__(master, padding=10)
-        self.grid(sticky="nsew")
-        master.columnconfigure(0, weight=1)
-        master.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=3)
         self.rowconfigure(6, weight=2)
@@ -379,11 +378,23 @@ class App(ttk.Frame):
 def main():
     root = tk.Tk()
     root.title(APP_NAME)
-    root.geometry("1080x760")
+    root.geometry("1080x800")
     root.minsize(880, 620)
     try:
         ttk.Style().theme_use("vista" if sys.platform.startswith("win") else "clam")
     except tk.TclError:
         pass
-    App(root)
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+
+    # Imported here rather than at the top: the split tab borrows from this
+    # module, and by now this module has finished loading.
+    from .stacks_tab import SplitTab
+
+    # Split comes first because it comes first: a long run is filed into its
+    # stacks, and then each stack's folder is cropped.
+    tabs = ttk.Notebook(root)
+    tabs.grid(row=0, column=0, sticky="nsew")
+    tabs.add(SplitTab(tabs), text="  1 · Split into stacks  ")
+    tabs.add(App(tabs), text="  2 · Crop cards  ")
     root.mainloop()

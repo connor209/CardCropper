@@ -61,7 +61,40 @@ on it.
 
 ## Using it
 
-Double-click `CardCropper.bat` (or `CardCropper.exe`).
+Double-click `CardCropper.bat` (or `CardCropper.exe`). The window has two
+tabs, in the order you use them: **Split into stacks**, then **Crop cards**.
+
+### 1 · Split into stacks
+
+Scan a long run in one go — 500 cards rather than ten runs of 50 — and let
+the app file it into one folder per stack.
+
+1. **Add folder…** and pick the folder the scanner wrote the whole run to.
+   Set **Cards per stack** (50 by default). The run is paired exactly as the
+   Crop tab pairs it, then cut every 50 cards.
+2. **Walk the breaks.** For each break the app shows the last card of one
+   stack and the first card of the next, front and back. Count that many cards
+   off the physical pile: the last one should be the card on the left, the
+   next one the card on the right.
+   - It matches → **Matches the pile — next**.
+   - It does not (a double feed, a card pulled out to rescan) → **Break 1 card
+     earlier / later** until it does. The scans decide which folder a card goes
+     in, so a stack of 49 that matches the pile is right and a stack of 50 that
+     does not is wrong. Stacks that are not the usual size show in red.
+3. **Folders.** They are created inside the scan folder unless you choose
+   elsewhere, named `Stack 01`, `Stack 02`, … by default. The name can use
+   `{n}` (stack number), `{first}` and `{last}` (card numbers) and `{count}`;
+   `Box {n:02d} ({first}-{last})` gives `Box 01 (1-50)`.
+4. **Create folders & move scans.** The scans are **moved**, not copied, and
+   keep their filenames, so each stack folder pairs into exactly the cards it
+   was cut from and is ready for the Crop tab. Nothing moves if any
+   destination file already exists. A card moves as a pair — never a front
+   without its back — and if a move fails part-way, running it again carries
+   on; **Undo** puts every scan back where it was.
+
+An odd scan left without a partner is named in red and left where it is.
+
+### 2 · Crop cards
 
 1. **Add scans…** or **Add folder…**. Files pair in filename order: the first
    is a front, the second is its back, and so on. `2.jpg` sorts before
@@ -99,6 +132,14 @@ CardCropper.exe --cli "C:\scans" --out "C:\out" --style grading --naming sequenc
 ```
 
 Or from a checkout: `python -m cardcropper --cli scans --out out`.
+
+Splitting a run into stack folders, cut every 50 cards. There is no walk
+through the breaks here, so look at `--dry-run` first:
+
+```
+CardCropper.exe --split "C:\scans" --per 50 --dry-run
+CardCropper.exe --split "C:\scans" --per 50 --name "Stack {n:02d}"
+```
 
 ## Building the .exe
 
@@ -142,4 +183,6 @@ It generates scans at known angles, runs both sheet styles end to end, and
 checks the things that fail silently: that the deskew recovers the angle
 actually applied, that an odd scan is reported rather than absorbed, that the
 output filenames sort into the order they were meant to, and that the front
-leads.
+leads. For splitting: that each stack folder pairs back into the cards it was
+cut from, that a clash moves nothing, that a failure never leaves half a card
+filed, and that undo puts everything back.

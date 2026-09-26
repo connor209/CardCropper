@@ -1,0 +1,471 @@
+"""
+The Split tab: one long scanning run in, a folder per stack out.
+
+Built around the walk through the breaks, because that is the only part that
+needs a person. Cutting a list every 50 is arithmetic; making sure the 50th
+scan is the 50th card in the pile is not, and a stack filed one card out
+describes every card in it wrongly. So each break is shown as the two cards
+either side of it, the operator splits the physical pile there, and moves the
+break when the pile says otherwise.
+"""
+
+import os
+import queue
+import threading
+import traceback
+
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+from PIL import ImageTk
+
+from . import batch, imaging, stacks
+from .gui import APP_NAME, _reveal
+
+THUMB = (124, 174)
+
+#: How many thumbnails to keep decoded. Paging back and forth across a break is
+#: the common move and should be instant; holding every card in a 500-card run
+#: is not needed for that.
+THUMB_CACHE = 48
+
+
+class SplitTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=10)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
+        self.rowconfigure(6, weight=1)
+
+        self.plan = stacks.StackPlan()
+        self.current = 1                # the break on screen: stack k starts here
+        self.checked = set()            # breaks the operator has confirmed
+        self.last_moves = []
+        self.thumbs = {}
+        self.events = queue.Queue()
+        self.worker = None
+
+        self._build_sources()
+        self._build_body()
+        self._build_output()
+        self._build_run()
+        self._poll()
+        self._refresh()
+
+    # ------------------------------------------------------------ layout
+
+    def _build_sources(self):
+        bar = ttk.Frame(self)
+        bar.grid(row=0, column=0, sticky="ew")
+        ttk.Button(bar, text="Add folder…", command=self.add_folder).pack(side="left")
+        ttk.Button(bar, text="Add scans…", command=self.add_files).pack(side="left", padx=(6, 0))
+        ttk.Button(bar, text="Clear", command=self.clear).pack(side="left", padx=(6, 0))
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
+        ttk.Label(bar, text="Cards per stack").pack(side="left")
+        self.per_var = tk.StringVar(value=str(stacks.PER_STACK))
+        ttk.Spinbox(bar, from_=1, to=1000, width=5, textvariable=self.per_var)\
+            .pack(side="left", padx=(4, 4))
+        ttk.Button(bar, text="Re-cut", command=self.recut).pack(side="left")
+
+        self.hint = ttk.Label(self, foreground="#666")
+        self.hint.grid(row=1, column=0, sticky="w", pady=(8, 4))
+
+    def _build_body(self):
+        body = ttk.Frame(self)
+        body.grid(row=2, column=0, sticky="nsew")
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        wrap = ttk.Frame(body)
+        wrap.grid(row=0, column=0, sticky="nsw")
+        wrap.rowconfigure(0, weight=1)
+        cols = ("stack", "cards", "count", "checked")
+        self.tree = ttk.Treeview(wrap, columns=cols, show="headings",
+                                 selectmode="browse", height=12)
+        for key, text, width in (("stack", "Folder", 110), ("cards", "Cards", 90),
+                                 ("count", "Count", 55), ("checked", "Break", 70)):
+            self.tree.heading(key, text=text)
+            self.tree.column(key, width=width, anchor="w" if key == "stack" else "center",
+                             stretch=False)
+        self.tree.grid(row=0, column=0, sticky="ns")
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.tree.yview)
+        sb.grid(row=0, column=1, sticky="ns")
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.tag_configure("odd", foreground="#b3261e")
+        self.tree.bind("<<TreeviewSelect>>", self._picked)
+
+        walk = ttk.Frame(body, padding=(14, 0, 0, 0))
+        walk.grid(row=0, column=1, sticky="nsew")
+        walk.columnconfigure(0, weight=1)
+        walk.columnconfigure(1, weight=1)
+        self.break_title = ttk.Label(walk, font=("TkDefaultFont", 11, "bold"))
+        self.break_title.grid(row=0, column=0, columnspan=2, sticky="w")
+        self.break_help = ttk.Label(walk, foreground="#444", wraplength=680, justify="left")
+        self.break_help.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 6))
+
+        self.sides = []
+        for col in (0, 1):
+            box = ttk.LabelFrame(walk, padding=6)
+            box.grid(row=3, column=col, sticky="nsew", padx=(0, 8) if col == 0 else 0)
+            faces = []
+            for f in (0, 1):
+                cell = ttk.Frame(box)
+                cell.grid(row=0, column=f, padx=4)
+                pic = ttk.Label(cell, anchor="center")
+                pic.pack()
+                name = ttk.Label(cell, foreground="#666")
+                name.pack()
+                faces.append((pic, name))
+            self.sides.append((box, faces))
+
+        # Above the pictures, not below them: on a small screen the bottom of
+        # this pane is what gets cut off, and these are what is pressed.
+        nav = ttk.Frame(walk)
+        nav.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        self.prev_btn = ttk.Button(nav, text="◀ Previous break",
+                                   command=lambda: self.go(self.current - 1))
+        self.prev_btn.pack(side="left")
+        self.earlier_btn = ttk.Button(nav, text="Break 1 card earlier",
+                                      command=lambda: self.nudge(-1))
+        self.earlier_btn.pack(side="left", padx=(12, 0))
+        self.later_btn = ttk.Button(nav, text="Break 1 card later",
+                                    command=lambda: self.nudge(1))
+        self.later_btn.pack(side="left", padx=(6, 0))
+        self.ok_btn = ttk.Button(nav, text="Matches the pile — next ▶", command=self.confirm)
+        self.ok_btn.pack(side="right")
+
+    def _build_output(self):
+        box = ttk.LabelFrame(self, text="Folders", padding=8)
+        box.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        box.columnconfigure(1, weight=1)
+
+        ttk.Label(box, text="Create in").grid(row=0, column=0, sticky="w")
+        self.dest_var = tk.StringVar()
+        ttk.Entry(box, textvariable=self.dest_var).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(box, text="Browse…", command=self.pick_dest).grid(row=0, column=2)
+
+        ttk.Label(box, text="Named").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.name_var = tk.StringVar(value=stacks.TEMPLATE)
+        ttk.Entry(box, textvariable=self.name_var, width=30)\
+            .grid(row=1, column=1, sticky="w", padx=6, pady=(6, 0))
+        self.name_var.trace_add("write", lambda *_: self._refresh_names())
+
+        self.preview = ttk.Label(box, foreground="#666")
+        self.preview.grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(box, foreground="#888",
+                  text="{n} stack number · {first} {last} card numbers · {count} cards "
+                       "in it · {n:02d} pads to two digits")\
+            .grid(row=3, column=0, columnspan=3, sticky="w")
+
+    def _build_run(self):
+        bar = ttk.Frame(self)
+        bar.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        bar.columnconfigure(1, weight=1)
+        self.run_btn = ttk.Button(bar, text="Create folders & move scans", command=self.start)
+        self.run_btn.grid(row=0, column=0)
+        self.progress = ttk.Progressbar(bar, mode="determinate")
+        self.progress.grid(row=0, column=1, sticky="ew", padx=10)
+        self.undo_btn = ttk.Button(bar, text="Undo", state="disabled", command=self.undo)
+        self.undo_btn.grid(row=0, column=2)
+        self.open_btn = ttk.Button(bar, text="Open folder", state="disabled",
+                                   command=lambda: _reveal(self.dest_var.get()))
+        self.open_btn.grid(row=0, column=3, padx=(6, 0))
+
+        ttk.Label(self, text="Log").grid(row=5, column=0, sticky="w", pady=(10, 2))
+        wrap = ttk.Frame(self)
+        wrap.grid(row=6, column=0, sticky="nsew")
+        wrap.columnconfigure(0, weight=1)
+        wrap.rowconfigure(0, weight=1)
+        self.log = tk.Text(wrap, height=3, wrap="word", state="disabled")
+        self.log.grid(row=0, column=0, sticky="nsew")
+        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.log.yview)
+        sb.grid(row=0, column=1, sticky="ns")
+        self.log.configure(yscrollcommand=sb.set)
+
+    # ------------------------------------------------------------ state
+
+    def _say(self, text):
+        self.log.configure(state="normal")
+        self.log.insert("end", text + "\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def _names(self):
+        """Folder names, or None with the reason shown where the preview goes."""
+        try:
+            return stacks.folder_names(self.plan, self.name_var.get())
+        except ValueError as exc:
+            self.preview.configure(foreground="#b3261e", text=str(exc))
+            return None
+
+    def _refresh_names(self):
+        names = self._names()
+        if names is None:
+            return
+        for k, name in enumerate(names):
+            if self.tree.exists(str(k)):
+                self.tree.set(str(k), "stack", name)
+        shown = ", ".join(names[:3]) + (f" … {names[-1]}" if len(names) > 3 else "")
+        self.preview.configure(foreground="#666",
+                               text=f"{len(names)} folder(s): {shown}" if names else "")
+
+    def _refresh(self):
+        self.tree.delete(*self.tree.get_children())
+        per = self._per()
+        names = self._names() or [""] * len(self.plan)
+        for k in range(len(self.plan)):
+            start, end = self.plan.span(k)
+            mark = "" if k == 0 else ("✓" if k in self.checked else "to check")
+            last = k == len(self.plan) - 1
+            # The last stack is allowed to be short — it is whatever is left.
+            odd = end - start != per and not (last and end - start < per)
+            self.tree.insert("", "end", iid=str(k), tags=("odd",) if odd else (),
+                             values=(names[k], f"{start + 1}–{end}", end - start, mark))
+        self._refresh_names()
+
+        n = len(self.plan.cards)
+        if self.plan.leftover:
+            self.hint.configure(
+                foreground="#b3261e",
+                text=f"{len(self.plan.leftover)} scan(s) without a partner, left where "
+                     "they are: " + ", ".join(os.path.basename(p) for p in self.plan.leftover)
+                     + " — an odd number of scans means a front or back is missing.")
+        elif n:
+            breaks = len(self.plan) - 1
+            self.hint.configure(
+                foreground="#666",
+                text=f"{n} cards in {len(self.plan)} stack(s). "
+                     f"{len(self.checked)} of {breaks} break(s) checked against the pile.")
+        else:
+            self.hint.configure(
+                foreground="#666",
+                text="Add the whole scanning run. It is cut into stacks, then you check "
+                     "each break against the physical pile before anything is moved.")
+        self.run_btn.configure(state="normal" if n else "disabled")
+        self._show_break()
+
+    def _per(self):
+        try:
+            return max(1, int(self.per_var.get()))
+        except ValueError:
+            return stacks.PER_STACK
+
+    def _thumb(self, path):
+        if path not in self.thumbs:
+            if len(self.thumbs) >= THUMB_CACHE:
+                self.thumbs.pop(next(iter(self.thumbs)))
+            try:
+                self.thumbs[path] = ImageTk.PhotoImage(imaging.thumbnail(path, THUMB))
+            except Exception:                               # noqa: BLE001
+                self.thumbs[path] = None
+        return self.thumbs[path]
+
+    def _show_card(self, side, title, card):
+        box, faces = self.sides[side]
+        box.configure(text=title)
+        for (pic, name), path in zip(faces, (card.front, card.back) if card else (None, None)):
+            img = self._thumb(path) if path else None
+            pic.configure(image=img or "", text="" if img or not path else "cannot open")
+            pic.image = img
+            name.configure(text=os.path.basename(path) if path else "")
+
+    def _show_break(self):
+        plan, k = self.plan, self.current
+        breaks = len(plan) - 1
+        buttons = (self.prev_btn, self.earlier_btn, self.later_btn, self.ok_btn)
+        if breaks < 1:
+            self.break_title.configure(
+                text="Nothing to split" if plan.cards else "No scans yet")
+            self.break_help.configure(
+                text="The whole run fits in one stack." if plan.cards else "")
+            for side in (0, 1):
+                self._show_card(side, "", None)
+            for b in buttons:
+                b.configure(state="disabled")
+            return
+        for b in buttons:
+            b.configure(state="normal")
+        self.prev_btn.configure(state="normal" if k > 1 else "disabled")
+
+        start, _ = plan.span(k)
+        before, after = plan.cards[start - 1], plan.cards[start]
+        names = self._names() or [f"stack {i + 1}" for i in range(len(plan))]
+        count = plan.span(k - 1)[1] - plan.span(k - 1)[0]
+        self.break_title.configure(
+            text=f"Break {k} of {breaks} — between {names[k - 1]} and {names[k]}"
+                 + ("   ✓ checked" if k in self.checked else ""))
+        self.break_help.configure(
+            text=f"Take the next {count} card(s) off the pile for {names[k - 1]}. "
+                 f"The last of them should be the card on the left, and the next card in "
+                 f"the pile the one on the right. If the pile does not match, move the "
+                 f"break until it does — the scans decide which folder a card goes in.")
+        self._show_card(0, f"Last card of {names[k - 1]} — card {start}", before)
+        self._show_card(1, f"First card of {names[k]} — card {start + 1}", after)
+        if self.tree.exists(str(k)):
+            self.tree.see(str(k))
+
+    # ------------------------------------------------------------ actions
+
+    def _load(self, paths):
+        if not paths:
+            return
+        paths = list(paths) + [p for c in self.plan.cards for p in (c.front, c.back)]
+        paths += self.plan.leftover
+        self.plan = stacks.plan_stacks(sorted(set(paths), key=batch.natural_key), self._per())
+        self.checked.clear()
+        self.last_moves = []
+        self.undo_btn.configure(state="disabled")
+        self.current = 1
+        if not self.dest_var.get() and self.plan.cards:
+            self.dest_var.set(os.path.dirname(self.plan.cards[0].front))
+        self._say(f"{len(self.plan.cards)} card(s) from {len(paths)} scan(s), "
+                  f"cut into {len(self.plan)} stack(s) of {self._per()}.")
+        self._refresh()
+
+    def add_folder(self):
+        folder = filedialog.askdirectory(title="Select the folder the scanner wrote to")
+        if folder:
+            self._load(batch.list_images(folder))
+
+    def add_files(self):
+        self._load(filedialog.askopenfilenames(
+            title="Select the scans — the whole run, in order",
+            filetypes=[("Images", " ".join("*" + e for e in imaging.IMAGE_EXTS)),
+                       ("All files", "*.*")]))
+
+    def clear(self):
+        self.plan = stacks.StackPlan()
+        self.checked.clear()
+        self.current = 1
+        self.thumbs.clear()
+        self._refresh()
+
+    def recut(self):
+        if self.checked and not messagebox.askyesno(
+                APP_NAME, "Re-cutting throws away the breaks you have checked. Carry on?"):
+            return
+        self.plan.rebreak(self._per())
+        self.checked.clear()
+        self.current = 1
+        self._refresh()
+
+    def pick_dest(self):
+        folder = filedialog.askdirectory(title="Where should the stack folders go?")
+        if folder:
+            self.dest_var.set(folder)
+
+    def go(self, k):
+        self.current = max(1, min(len(self.plan) - 1, k))
+        self._show_break()
+
+    def _picked(self, _event):
+        sel = self.tree.selection()
+        if sel and len(self.plan) > 1:
+            k = int(sel[0])
+            if max(1, k) != self.current:
+                self.go(k)
+
+    def nudge(self, delta):
+        if self.plan.nudge(self.current, delta):
+            # This break is unproven again. The others are not: they sit at
+            # the same card as before, so what was checked there still holds.
+            self.checked.discard(self.current)
+            self._refresh()
+
+    def confirm(self):
+        self.checked.add(self.current)
+        nxt = next((k for k in range(self.current + 1, len(self.plan))
+                    if k not in self.checked), None)
+        if nxt is None:
+            nxt = next((k for k in range(1, len(self.plan)) if k not in self.checked),
+                       self.current)
+        self.current = nxt
+        self._refresh()
+
+    # ------------------------------------------------------------ running
+
+    def start(self):
+        if self.worker and self.worker.is_alive():
+            return
+        dest = self.dest_var.get().strip()
+        if not dest:
+            messagebox.showwarning(APP_NAME, "Choose where the stack folders should go.")
+            return
+        issues = stacks.problems(self.plan, dest, self.name_var.get())
+        if issues:
+            messagebox.showwarning(APP_NAME, "Nothing has been moved.\n\n" + "\n".join(issues))
+            return
+        unchecked = len(self.plan) - 1 - len(self.checked)
+        if unchecked > 0 and not messagebox.askyesno(
+                APP_NAME,
+                f"{unchecked} break(s) have not been checked against the pile.\n\n"
+                "A break that is a card out files every card after it in the wrong "
+                "stack. Move the scans anyway?"):
+            return
+
+        plan, template = self.plan, self.name_var.get()
+        total = len(plan.cards)
+        self.progress.configure(maximum=total, value=0)
+        self.run_btn.configure(state="disabled")
+        self._say(f"\nFiling {total} card(s) into {len(plan)} folder(s) in {dest}")
+
+        def work():
+            try:
+                moves = stacks.apply(plan, dest, template,
+                                     progress=lambda d, t: self.events.put(("card", d)))
+                self.events.put(("finished", moves, None))
+            except stacks.SplitFailed as exc:
+                self.events.put(("finished", exc.moves, exc))
+            except Exception:                               # noqa: BLE001
+                self.events.put(("crashed", traceback.format_exc()))
+
+        self.worker = threading.Thread(target=work, daemon=True)
+        self.worker.start()
+
+    def undo(self):
+        if not self.last_moves:
+            return
+        stuck = stacks.undo(self.last_moves)
+        self._say(f"Undone: {len(self.last_moves) - len(stuck)} scan(s) moved back.")
+        for src, dst, exc in stuck:
+            self._say(f"  could not move back {dst}: {exc}")
+        self.last_moves = []
+        self.undo_btn.configure(state="disabled")
+
+    def _poll(self):
+        try:
+            while True:
+                event = self.events.get_nowait()
+                if event[0] == "card":
+                    self.progress.configure(value=event[1])
+                elif event[0] == "finished":
+                    _, moves, err = event
+                    # Added to, not replaced: a run picked up after a failure
+                    # should undo as one with the part that went first.
+                    self.last_moves += moves
+                    self.run_btn.configure(state="normal")
+                    self.undo_btn.configure(state="normal" if moves else "disabled")
+                    self.open_btn.configure(state="normal")
+                    if err:
+                        self._say(f"Stopped: {err}")
+                        self._say(f"{len(self.last_moves) // 2} card(s) were filed before "
+                                  "it stopped. Run it again to carry on, or Undo to put "
+                                  "them back.")
+                        messagebox.showerror(APP_NAME, f"The split stopped part-way.\n\n{err}")
+                    else:
+                        sizes = self.plan.sizes()
+                        self._say(f"Done: {len(self.last_moves) // 2} card(s) in {len(sizes)} "
+                                  f"folder(s). Each is ready for the Crop cards tab.")
+                        # The run's paths now point at files that have moved.
+                        self.plan = stacks.StackPlan(leftover=self.plan.leftover)
+                        self.checked.clear()
+                        self.thumbs.clear()
+                        self._refresh()
+                elif event[0] == "crashed":
+                    self.run_btn.configure(state="normal")
+                    self._say(event[1])
+                    messagebox.showerror(APP_NAME, "The split stopped unexpectedly. "
+                                                   "See the log for details.")
+        except queue.Empty:
+            pass
+        self.after(80, self._poll)

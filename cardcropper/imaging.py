@@ -183,6 +183,26 @@ def load(path):
     return im.convert("RGB")
 
 
+def thumbnail(path, size):
+    """
+    A small picture of the card in a scan, for a person to recognise it by.
+
+    Cropped to the card so the scanner bed does not take half the space, but
+    not deskewed — this is for telling one card from the next, not for
+    judging it. JPEGs are decoded at reduced size, which is what keeps paging
+    through breaks in a 500-card run instant.
+    """
+    im = Image.open(path)
+    im.draft("RGB", (size[0] * 2, size[1] * 2))
+    im = ImageOps.exif_transpose(im).convert("RGB")
+    box = _card_box(_mask(im))
+    if box is not None:
+        x0, y0, x1, y1 = box
+        im = im.crop((x0, y0, x1 + 1, y1 + 1))
+    im.thumbnail(size, Image.LANCZOS)
+    return im
+
+
 def straighten(im):
     """
     Deskew and crop to the card, at the scan's OWN resolution.
