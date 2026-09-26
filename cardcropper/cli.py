@@ -10,7 +10,7 @@ import argparse
 import os
 import sys
 
-from . import batch, imaging
+from . import batch, folders, imaging
 
 
 def main():
@@ -74,6 +74,31 @@ def main():
         print(f"  card {i}: {os.path.basename(card.front)} + "
               f"{os.path.basename(card.back)} — {exc}", file=sys.stderr)
     return 1 if failed else 0
+
+
+def folders_main():
+    ap = argparse.ArgumentParser(
+        prog="cardcropper --folders",
+        description="Make the day's scan folders: YY.MM.DD - 001, YY.MM.DD - 002, …")
+    ap.add_argument("count", type=int, help="how many folders to make")
+    ap.add_argument("location", nargs="?",
+                    help="where to make them (default: the last location used)")
+    ap.add_argument("--date", help="YY.MM.DD (default: today)")
+    ap.add_argument("--start", type=int,
+                    help="first number (default: one past the highest already there)")
+    args = ap.parse_args()
+
+    location = args.location or folders.load_settings().get("folders_location")
+    if not location:
+        sys.exit("no location given, and none saved from an earlier run")
+    try:
+        made = folders.create(location, args.count, args.date, args.start)
+    except (ValueError, OSError) as exc:
+        sys.exit(str(exc))
+    folders.save_settings(folders_location=location, folders_count=args.count)
+    for path in made:
+        print(path)
+    return 0
 
 
 if __name__ == "__main__":

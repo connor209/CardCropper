@@ -8,6 +8,10 @@ The whole design is one screen. Add scans, look at how they paired, fix the
 pairs that are wrong, press Crop. There is no wizard because there is only one
 decision on it worth pausing over — whether the front and back on each row
 belong to the same card — and a wizard would hide exactly that behind a step.
+
+A second tab makes the day's empty scan folders before a session starts —
+`26.09.26 - 001`, `26.09.26 - 002`, … — which is where the scans this screen
+reads come from.
 """
 
 import os
@@ -20,7 +24,7 @@ import traceback
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import batch, imaging
+from . import batch, folders, imaging
 
 APP_NAME = "CardCropper"
 
@@ -376,6 +380,120 @@ class App(ttk.Frame):
         self.after(80, self._poll)
 
 
+class FoldersTab(ttk.Frame):
+    """Make the next N `YY.MM.DD - 001` folders for a scanning session."""
+
+    def __init__(self, master, settings):
+        super().__init__(master, padding=10)
+        self.grid(sticky="nsew")
+        master.columnconfigure(0, weight=1)
+        master.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(3, weight=1)
+
+        box = ttk.LabelFrame(self, text="Scan folders for the day", padding=8)
+        box.grid(row=0, column=0, sticky="ew")
+        box.columnconfigure(1, weight=1)
+
+        ttk.Label(box, text="Location").grid(row=0, column=0, sticky="w")
+        self.loc_var = tk.StringVar(value=settings.get("folders_location", ""))
+        ttk.Entry(box, textvariable=self.loc_var).grid(row=0, column=1, sticky="ew", padx=6)
+        ttk.Button(box, text="Browse…", command=self.pick_location).grid(row=0, column=2)
+
+        ttk.Label(box, text="Date").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        row = ttk.Frame(box)
+        row.grid(row=1, column=1, columnspan=2, sticky="w", padx=6, pady=(8, 0))
+        self.date_var = tk.StringVar(value=folders.date_label())
+        ttk.Entry(row, textvariable=self.date_var, width=10).pack(side="left")
+        ttk.Button(row, text="Today", command=lambda: self.date_var.set(folders.date_label()))\
+            .pack(side="left", padx=(6, 0))
+        ttk.Label(row, text="YY.MM.DD", foreground="#666").pack(side="left", padx=(8, 0))
+
+        ttk.Label(box, text="How many").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.count_var = tk.StringVar(value=str(settings.get("folders_count", 5)))
+        ttk.Spinbox(box, from_=1, to=999, textvariable=self.count_var, width=6)\
+            .grid(row=2, column=1, sticky="w", padx=6, pady=(8, 0))
+
+        self.preview = ttk.Label(box, foreground="#666")
+        self.preview.grid(row=3, column=0, columnspan=3, sticky="w", pady=(10, 0))
+
+        bar = ttk.Frame(self)
+        bar.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        self.make_btn = ttk.Button(bar, text="Create folders", command=self.make)
+        self.make_btn.pack(side="left")
+        ttk.Button(bar, text="Open location",
+                   command=lambda: _reveal(self.loc_var.get().strip()))\
+            .pack(side="left", padx=(10, 0))
+
+        ttk.Label(self, text="Log").grid(row=2, column=0, sticky="w", pady=(10, 2))
+        self.log = tk.Text(self, height=8, wrap="word", state="disabled")
+        self.log.grid(row=3, column=0, sticky="nsew")
+
+        for var in (self.loc_var, self.date_var, self.count_var):
+            var.trace_add("write", lambda *_: self._refresh())
+        self._refresh()
+
+    def _say(self, text):
+        self.log.configure(state="normal")
+        self.log.insert("end", text + "\n")
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    def _inputs(self):
+        """(location, count, label) — or raise ValueError saying what is wrong."""
+        location = self.loc_var.get().strip()
+        if not location:
+            raise ValueError("Choose a location for the folders.")
+        try:
+            count = int(self.count_var.get())
+        except ValueError:
+            raise ValueError("How many folders? Enter a whole number.") from None
+        if not 1 <= count <= 999:
+            raise ValueError("Make between 1 and 999 folders at a time.")
+        label = self.date_var.get().strip()
+        try:
+            folders.parse_date_label(label)
+        except ValueError:
+            raise ValueError(f"'{label}' is not a date in YY.MM.DD form.") from None
+        return location, count, label
+
+    def _refresh(self):
+        try:
+            location, count, label = self._inputs()
+        except ValueError as exc:
+            self.preview.configure(text=str(exc), foreground="#b3261e")
+            self.make_btn.configure(state="disabled")
+            return
+        names = folders.plan(location, count, label)
+        span = names[0] if count == 1 else f"{names[0]}  to  {names[-1]}"
+        already = len(folders.existing_numbers(location, label))
+        self.preview.configure(
+            foreground="#666",
+            text=f"Will create {span}"
+                 + (f"   ({already} already exist for {label}, so numbering carries on)"
+                    if already else ""))
+        self.make_btn.configure(state="normal")
+
+    def pick_location(self):
+        folder = filedialog.askdirectory(title="Where should the day's scan folders go?",
+                                         initialdir=self.loc_var.get() or None)
+        if folder:
+            self.loc_var.set(os.path.normpath(folder))
+
+    def make(self):
+        try:
+            location, count, label = self._inputs()
+            made = folders.create(location, count, label)
+        except (ValueError, OSError) as exc:
+            messagebox.showwarning(APP_NAME, str(exc))
+            return
+        folders.save_settings(folders_location=location, folders_count=count)
+        self._say(f"Created {len(made)} folder(s) in {location}:")
+        for path in made:
+            self._say("  " + os.path.basename(path))
+        self._refresh()
+
+
 def main():
     root = tk.Tk()
     root.title(APP_NAME)
@@ -385,5 +503,21 @@ def main():
         ttk.Style().theme_use("vista" if sys.platform.startswith("win") else "clam")
     except tk.TclError:
         pass
-    App(root)
+
+    settings = folders.load_settings()
+    tabs = ttk.Notebook(root)
+    tabs.grid(row=0, column=0, sticky="nsew")
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+    crop_tab, folders_tab = ttk.Frame(tabs), ttk.Frame(tabs)
+    tabs.add(crop_tab, text="Crop cards")
+    tabs.add(folders_tab, text="Scan folders")
+    App(crop_tab)
+    FoldersTab(folders_tab, settings)
+    # Open on whichever tab was in use last — someone who starts the day by
+    # making folders should not have to click across to them every time.
+    if settings.get("tab") == "folders":
+        tabs.select(folders_tab)
+    tabs.bind("<<NotebookTabChanged>>", lambda _e: folders.save_settings(
+        tab="folders" if tabs.select() == str(folders_tab) else "crop"))
     root.mainloop()

@@ -8,6 +8,7 @@ somebody's hands. Freezing a broken pipeline into an .exe still produces an
 it, which is the worst place to find it.
 """
 
+import datetime
 import os
 import shutil
 import sys
@@ -17,7 +18,7 @@ from PIL import Image, ImageDraw
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from cardcropper import batch, imaging          # noqa: E402
+from cardcropper import batch, folders, imaging # noqa: E402
 
 
 def make_scan(path, front, angle):
@@ -132,6 +133,31 @@ def main():
         check(len(failures) == 1, "the failure should be reported for re-running")
         check(not os.listdir(partial),
               f"a failed card left files behind: {os.listdir(partial)}")
+
+        # Day folders: the format is exact, and a second session the same day
+        # carries the numbering on instead of clashing with the first.
+        day = os.path.join(work, "days")
+        check(folders.date_label(datetime.date(2026, 9, 6)) == "26.09.06",
+              "date label is not YY.MM.DD")
+        made = folders.create(day, 3, "26.09.06")
+        check([os.path.basename(p) for p in made]
+              == ["26.09.06 - 001", "26.09.06 - 002", "26.09.06 - 003"],
+              f"unexpected folder names: {made}")
+        with open(os.path.join(made[0], "scan.jpg"), "w") as fh:
+            fh.write("x")
+        more = folders.create(day, 2, "26.09.06")
+        check([os.path.basename(p) for p in more] == ["26.09.06 - 004", "26.09.06 - 005"],
+              f"numbering did not carry on: {more}")
+        check(os.listdir(made[0]) == ["scan.jpg"], "an existing folder was touched")
+        # Another day's folders do not count towards this one's numbering.
+        check(folders.plan(day, 1, "26.09.07") == ["26.09.07 - 001"],
+              "another day's folders leaked into the numbering")
+        try:
+            folders.create(day, 3, "26.09.06", start=5)
+            check(False, "a clash with an existing folder should be refused")
+        except FileExistsError:
+            pass
+        check(len(os.listdir(day)) == 5, "a refused run still made folders")
 
         import cardcropper.gui                   # noqa: F401  (tkinter present?)
     finally:

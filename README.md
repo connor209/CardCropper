@@ -89,6 +89,24 @@ The original scans are copied, never moved. If a pairing turns out to be off by
 one, the fix is to pair again — only possible while the scans are still where
 the scanner left them.
 
+## Making the day's scan folders
+
+The **Scan folders** tab makes empty folders to scan into, named for the day and
+numbered: `26.09.26 - 001`, `26.09.26 - 002`, …
+
+1. **Location** — where the folders go. It is remembered, so it only needs
+   setting once.
+2. **Date** — today by default, in `YY.MM.DD` form.
+3. **How many**, then **Create folders**.
+
+Numbering carries on from whatever is already there for that date, so a second
+session the same day starts at `004` rather than colliding with `001`. Existing
+folders are never touched. The app reopens on whichever tab you used last.
+
+From the command line, `CardCropper.exe --folders 5 "D:\Scans"` does the same;
+leave out the location to reuse the last one, and add `--date 26.09.25` for
+another day.
+
 ## From the command line
 
 The same engine, without the window:
