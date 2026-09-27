@@ -26,7 +26,9 @@ a = Analysis(
     datas=[],
     # Pillow finds Tk through this shim, and PyInstaller cannot see the import
     # because it happens inside a try/except at runtime.
-    hiddenimports=["PIL._tkinter_finder"],
+    # The build stamp CI writes before building, which the updater imports
+    # inside a try — a local build without one simply never offers updates.
+    hiddenimports=["PIL._tkinter_finder", "cardcropper._version"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

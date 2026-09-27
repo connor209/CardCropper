@@ -843,11 +843,18 @@ def main():
     tabs.add(pages["split"], text="Split into stacks")
     crop = App(pages["crop"])
     FoldersTab(pages["folders"], settings)
-    SplitTab(pages["split"], crop_settings=crop.crop_settings)
+    split = SplitTab(pages["split"], crop_settings=crop.crop_settings)
     # Open on whichever tab was in use last — someone who starts the day by
     # making folders should not have to click across to them every time.
     if settings.get("tab") in pages:
         tabs.select(pages[settings["tab"]])
     tabs.bind("<<NotebookTabChanged>>", lambda _e: folders.save_settings(
         tab=next(k for k, page in pages.items() if str(page) == tabs.select())))
+
+    # Asked a moment after the window is up, so a slow network never holds it
+    # back, and never while something is running — updating restarts the app.
+    from . import updater
+    busy = lambda: any(t is not None and t.is_alive()                 # noqa: E731
+                       for t in (crop.worker, crop.planner, split.worker, split.planner))
+    root.after(1500, lambda: updater.offer(root, is_busy=busy))
     root.mainloop()

@@ -5,3 +5,5 @@ dist/
 *.spec.bak
 .venv/
 out/
+cardcropper/_version.py
+cardcropper.old/

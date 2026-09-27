@@ -15,6 +15,7 @@ import random
 import shutil
 import sys
 import tempfile
+import zipfile
 
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
@@ -282,6 +283,69 @@ def split_checks(work, scans):
     check(thumb.size[0] <= 150 and thumb.size[1] <= 210, f"thumbnail is {thumb.size}")
     # Cropped to the card, so it is card-shaped rather than scanner-bed-shaped.
     check(1.25 < thumb.size[1] / thumb.size[0] < 1.55, f"thumbnail not cropped: {thumb.size}")
+
+
+def updater_checks(work):
+    """
+    The self-update. What it must never do: install a download that is not the
+    build it was promised, leave a half-swapped copy behind when it fails, or
+    touch a copy that CI did not build — a working checkout, like this one.
+    """
+    from cardcropper import updater
+
+    check(updater.parse_version("abc123\nAdd a thing\n") == ("abc123", "Add a thing"),
+          "version.txt not read")
+    check(updater.parse_version("") == (None, ""), "an empty version.txt was believed")
+    # CI stamps the build before testing it, so the unstamped case is set up
+    # here rather than assumed of the checkout the tests happen to run in.
+    real_current, updater.current = updater.current, lambda: None
+    try:
+        check(updater.check() is None,
+              "a copy without a build stamp must never be offered an update")
+    finally:
+        updater.current = real_current
+
+    root = os.path.join(work, "installed")
+    os.makedirs(os.path.join(root, "cardcropper"))
+    for name, text in (("cardcropper/__init__.py", "OLD"),
+                       ("cardcropper/_version.py", 'COMMIT = "old"\n'),
+                       ("CardCropper.bat", "old bat"), ("requirements.txt", "pillow\n")):
+        with open(os.path.join(root, name), "w") as fh:
+            fh.write(text)
+    check(updater.can_self_update(root), "a bundle should be able to update itself")
+
+    def bundle(commit, requirements="pillow\n"):
+        path = os.path.join(work, f"bundle-{commit}.zip")
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("cardcropper/__init__.py", "NEW")
+            zf.writestr("cardcropper/_version.py", f'COMMIT = "{commit}"\n')
+            zf.writestr("CardCropper.bat", "new bat")
+            zf.writestr("requirements.txt", requirements)
+        return path
+
+    def read(name):
+        with open(os.path.join(root, name)) as fh:
+            return fh.read()
+
+    try:
+        updater.install(bundle("other"), root, expected="new")
+        check(False, "a download of the wrong build should be refused")
+    except ValueError:
+        pass
+    check(read("cardcropper/__init__.py") == "OLD" and read("CardCropper.bat") == "old bat",
+          "a refused update changed the installed copy")
+
+    changed = updater.install(bundle("new"), root, expected="new")
+    check(read("cardcropper/__init__.py") == "NEW" and read("CardCropper.bat") == "new bat",
+          "the update was not installed")
+    check(not changed, "unchanged requirements reported as changed")
+    check(sorted(os.listdir(root)) == ["CardCropper.bat", "cardcropper", "requirements.txt"],
+          f"the update left things behind: {sorted(os.listdir(root))}")
+    check(updater.install(bundle("newer", "pillow\nnumpy\n"), root, expected="newer"),
+          "new requirements should be reported so they get installed")
+
+    os.makedirs(os.path.join(root, ".git"))
+    check(not updater.can_self_update(root), "a git checkout must never update itself")
 
 
 def main():
@@ -1342,6 +1406,7 @@ def main():
               "a failed card took an earlier card's files with it")
 
         split_checks(work, scans)
+        updater_checks(work)
 
         import cardcropper.gui                   # noqa: F401  (tkinter present?)
         import cardcropper.stacks_tab            # noqa: F401

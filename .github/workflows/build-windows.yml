@@ -3,6 +3,11 @@ name: Build Windows executable
 # The .exe cannot be cross-compiled from Linux — PyInstaller bundles a
 # platform bootloader and the host CPython — so it is built on a Windows
 # runner and attached to the run as an artifact.
+#
+# A build of `main` is also published as the latest release, which is what the
+# app checks on start to offer an update — see cardcropper/updater.py. Only a
+# build that passed the smoke test gets that far, so a broken push never
+# reaches anyone's machine.
 
 on:
   push:
@@ -11,6 +16,13 @@ on:
 
 permissions:
   contents: read
+
+# A newer push to the same branch supersedes an older one still building.
+# Without this, a slow older build finishing last would publish itself as the
+# latest release and offer everyone a downgrade.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -22,6 +34,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+
+      # Which commit this build is, baked into both downloads so the app can
+      # tell whether the release it finds is a different one. Not in git: a
+      # checkout without it is somebody's working copy, and never updates.
+      - name: Stamp the build with its commit
+        run: Set-Content -Encoding ascii -Path cardcropper/_version.py -Value "COMMIT = `"$env:GITHUB_SHA`""
 
       - name: Install dependencies
         run: |
@@ -62,3 +80,31 @@ jobs:
           name: CardCropper-python
           path: CardCropper-python.zip
           if-no-files-found: error
+
+  # Its own job so that only this step can write to the repository, and only
+  # for a push to main.
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Publish as the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          # First line the commit, second what it was — the app shows the
+          # second when it offers the update.
+          { echo "$GITHUB_SHA"; printf '%s\n' "$MESSAGE" | head -n 1; } > version.txt
+          # One release, replaced each time: its download links never change.
+          gh release delete main-build --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create main-build CardCropper.exe CardCropper-python.zip version.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "CardCropper ${GITHUB_SHA::7}" \
+            --notes "Built from $GITHUB_SHA. Most people want CardCropper-python.zip: unzip it and double-click CardCropper.bat. It updates itself from here."

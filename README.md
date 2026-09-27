@@ -135,6 +135,29 @@ documentation says it can be turned back on afterwards; it used to require
 resetting Windows, so check that page says so on your machine before relying
 on it.
 
+## Updates
+
+Every change to `main` that builds and passes the tests is published as the
+[latest release](https://github.com/connor209/CardCropper/releases/latest) —
+the same two downloads, at links that never change.
+
+**`CardCropper-python.zip` updates itself.** A moment after the window opens it
+checks the latest release, and if there is a newer build it says what changed
+and asks whether to update. **Yes** downloads it, swaps it in and restarts the
+app — a few seconds; **No** asks again next time. It never asks while a crop or
+a split is running, since updating restarts the app. With no internet, or
+GitHub unreachable, it says nothing and opens as normal.
+
+**`CardCropper.exe` cannot replace itself** while it is running, and Smart App
+Control would block the new one anyway, so it offers to open the download page
+instead.
+
+A copy run from a git checkout never updates: it would overwrite the working
+tree. Only the builds CI makes carry the stamp the check compares.
+
+The check needs the repository to be public — a release on a private one
+cannot be downloaded without signing in, so the check fails and stays quiet.
+
 ## Using it
 
 Double-click `CardCropper.bat` (or `CardCropper.exe`). The window has three
