@@ -340,7 +340,8 @@ def _process(sheet, row, out_dir, thresholds, refresh, crops, fetcher, uploader)
         for face, url in (("front", scans[0]), ("back", scans[1])):
             blob = fetcher(url, os.path.join(raw, f"{folder}_{face}.jpg"), refresh)
             source = imaging.load(io.BytesIO(blob))
-            exact, padded, angle = imaging.straighten(source)
+            # CardUploader scans are on the feeder's black bed.
+            exact, padded, angle, _ = imaging.straighten(source)
             ok, why = imaging.detection_ok(exact, source)
             if not ok and face == "back":
                 # The score is read off the back border. With the border not
@@ -624,10 +625,12 @@ def _remove(path):
 
 
 def settings_dir():
-    """Where the app keeps what outlives a batch: thresholds, ledger, condition map."""
-    base = os.environ.get("APPDATA") if os.name == "nt" else None
-    return os.path.join(base, "CardCropper") if base else \
-        os.path.join(os.path.expanduser("~"), ".cardcropper")
+    """
+    Where the app keeps what outlives a batch: thresholds, ledger, condition
+    map. The same folder as the app's own settings.json.
+    """
+    from . import folders
+    return os.path.dirname(folders._settings_path())
 
 
 def default_paths():

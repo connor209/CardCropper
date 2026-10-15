@@ -27,13 +27,16 @@ BAND_COLOURS = {"likely-worse": "#b3261e", "review": "#8a5a00", "likely-nm": "#1
 
 
 def _open(path):
-    from .gui import reveal
-    reveal(path)
+    from .gui import _reveal
+    _reveal(path)
 
 
 class ConditionTab(ttk.Frame):
     def __init__(self, master):
         super().__init__(master, padding=10)
+        self.grid(sticky="nsew")
+        master.columnconfigure(0, weight=1)
+        master.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(3, weight=3)
         self.rowconfigure(6, weight=2)
