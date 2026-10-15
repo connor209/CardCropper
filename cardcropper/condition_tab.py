@@ -46,6 +46,7 @@ class ConditionTab(ttk.Frame):
         self.stop_flag = threading.Event()
         self.records = []
         self.by_row = {}
+        self._auto_out = ""
 
         self._build_inputs()
         self._build_run()
@@ -196,10 +197,15 @@ class ConditionTab(ttk.Frame):
             filetypes=[("CSV", "*.csv"), ("All files", "*.*")])
         if path:
             self.csv_var.set(path)
-            if not self.out_var.get():
+            # Follow the export unless a folder was chosen by hand: a folder
+            # named after the PREVIOUS export would mix two batches' crops and
+            # put this batch's review sheet under the wrong name.
+            current = self.out_var.get().strip()
+            if not current or current == self._auto_out:
                 stem = os.path.splitext(os.path.basename(path))[0]
-                self.out_var.set(os.path.join(os.path.dirname(path),
-                                              f"{stem}-conditioning"))
+                self._auto_out = os.path.join(os.path.dirname(path),
+                                              f"{stem}-conditioning")
+                self.out_var.set(self._auto_out)
 
     def pick_out(self):
         folder = filedialog.askdirectory(title="Where should the run's files go?")
