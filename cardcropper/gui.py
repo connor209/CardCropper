@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import batch, imaging
+from .condition_tab import ConditionTab
 
 APP_NAME = "CardCropper"
 
@@ -41,7 +42,7 @@ ORDER_LABELS = {
 }
 
 
-def _reveal(path):
+def reveal(path):
     """Open the output folder in the platform's file manager."""
     try:
         if sys.platform.startswith("win"):
@@ -55,11 +56,10 @@ def _reveal(path):
 
 
 class App(ttk.Frame):
+    """The "Crop scans" tab: pair a folder of scans and cut their crops."""
+
     def __init__(self, master):
         super().__init__(master, padding=10)
-        self.grid(sticky="nsew")
-        master.columnconfigure(0, weight=1)
-        master.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(2, weight=3)
         self.rowconfigure(6, weight=2)
@@ -162,7 +162,7 @@ class App(ttk.Frame):
         self.count = ttk.Label(bar, text="")
         self.count.grid(row=0, column=2)
         self.open_btn = ttk.Button(bar, text="Open folder", state="disabled",
-                                   command=lambda: _reveal(self.out_var.get()))
+                                   command=lambda: reveal(self.out_var.get()))
         self.open_btn.grid(row=0, column=3, padx=(10, 0))
 
         ttk.Label(self, text="Log").grid(row=5, column=0, sticky="w", pady=(10, 2))
@@ -385,5 +385,10 @@ def main():
         ttk.Style().theme_use("vista" if sys.platform.startswith("win") else "clam")
     except tk.TclError:
         pass
-    App(root)
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+    tabs = ttk.Notebook(root)
+    tabs.grid(row=0, column=0, sticky="nsew")
+    tabs.add(App(tabs), text="Crop scans")
+    tabs.add(ConditionTab(tabs), text="Condition a CSV")
     root.mainloop()

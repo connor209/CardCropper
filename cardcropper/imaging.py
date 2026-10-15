@@ -176,9 +176,9 @@ def _skew_degrees(m):
     return math.degrees(math.atan(slope))
 
 
-def load(path):
-    """Open an image, honouring EXIF rotation, in RGB."""
-    im = Image.open(path)
+def load(source):
+    """Open an image (a path or a file object), honouring EXIF rotation, in RGB."""
+    im = Image.open(source)
     im = ImageOps.exif_transpose(im)
     return im.convert("RGB")
 
@@ -345,6 +345,28 @@ def grading_sheet(padded, path, face="BACK"):
     for i, (name, img) in enumerate(edges):
         x, y = (i % 4) * col, title_h + corner_h + (i // 4) * edge_h
         sheet.paste(_tile(img, col, edge_h, name, small, fill=True), (x, y))
+    sheet.save(path, quality=96, subsampling=0)
+    return sheet.size
+
+
+def corner_sheet(padded, path, face="BACK"):
+    """
+    The four corners alone, captioned, on one row: the first thing to open for
+    a card the triage calls likely-worse.
+
+    Corners answer the NM question — countable nicks — and a corner sheet is a
+    third the size of the full grading sheet, so it is the cheaper look. The
+    edges (the MP question) are on the grading sheet when they are needed.
+    """
+    _, cut, _ = _cuts(padded)
+    col = SHEET_W // 4
+    title_h, corner_h = 52, 412
+    sheet = Image.new("RGB", (SHEET_W, title_h + corner_h), SHEET_BG)
+    d = ImageDraw.Draw(sheet)
+    d.text((14, 13), f"{face} — corners", fill=TITLE, font=_font(26, True))
+    small = _font(15, True)
+    for i, (name, img) in enumerate(corner_crops(padded, cut)):
+        sheet.paste(_tile(img, col, corner_h, name, small), (i * col, title_h))
     sheet.save(path, quality=96, subsampling=0)
     return sheet.size
 
