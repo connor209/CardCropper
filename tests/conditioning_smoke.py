@@ -317,6 +317,42 @@ def _run(work):
     except ValueError:
         pass
 
+    # ---- a PicURL uploaded from a CardCropper folder holds four images
+    from cardcropper import batch
+    sheets = os.path.join(work, "sheets")
+    os.makedirs(sheets)
+    padded = imaging.straighten(imaging.load(os.path.join(scans, "worn.jpg")))[1]
+    imaging.grading_sheet(padded, os.path.join(sheets, "crops.jpg"))
+    shutil.copy(os.path.join(scans, "front.jpg"), os.path.join(sheets, "0001_1_front.jpg"))
+    shutil.copy(os.path.join(scans, "worn.jpg"), os.path.join(sheets, "0001_2_back.jpg"))
+    for role in ("front-crops", "back-crops"):
+        shutil.copy(os.path.join(sheets, "crops.jpg"),
+                    os.path.join(sheets, f"0001_x_{role}.jpg"))
+    shutil.copy(os.path.join(scans, "worn.jpg"), os.path.join(sheets, "b.jpg"))
+    named = {n: pathlib.Path(os.path.join(sheets, n)).as_uri() for n in os.listdir(sheets)}
+    four = []
+    for order in batch.ORDERS:
+        for label in ("named", "bare"):
+            pics = []
+            for role in batch.ORDERS[order]:
+                if role == "front":
+                    pics.append(named["0001_1_front.jpg"] if label == "named" else url("front.jpg"))
+                elif role == "back":
+                    pics.append(named["0001_2_back.jpg"] if label == "named" else named["b.jpg"])
+                else:
+                    pics.append(named["crops.jpg"] if label == "bare"
+                                else named[f"0001_x_{role}.jpg"])
+            four.append(dict(base, CustomLabel=f"{order}-{label}", **{
+                "*Title": "Pikachu 065/202 Sword & Shield Pokemon NM",
+                "PicURL": "|".join(pics), "*C:Set": "Sword & Shield"}))
+    four_csv = os.path.join(work, "four.csv")
+    write_export(four_csv, four)
+    got = conditioning.prepare(four_csv, os.path.join(work, "four"), crops=False)
+    for rec in got.records:
+        check(rec["triage"] == "likely-worse",
+              f"{rec['sku']}: the back was not found among four images: "
+              f"{rec['triage']} {rec.get('note')}")
+
     # ---- Excel repair needs the title to agree
     check(cu.repair_card_number("Apr-99", "Natu 4/99 Neo") == ("4/99", "repaired"), "Mon-YY")
     check(cu.repair_card_number("12-Apr", "Foo 4/12 Bar")[0] == "4/12", "D-Mon")

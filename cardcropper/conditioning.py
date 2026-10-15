@@ -267,6 +267,45 @@ def _own_photo(url):
     return f"/{PHOTO_PREFIX}" in url
 
 
+def _role(url):
+    """'front', 'back', 'crops' or '' — read off a CardCropper output filename."""
+    name = urllib.parse.unquote(url.rsplit("/", 1)[-1].split("?")[0]).lower()
+    if "crops" in name:
+        return "crops"
+    if re.search(r"(^|[_\-.])back([_\-.]|$)", name):
+        return "back"
+    if re.search(r"(^|[_\-.])front([_\-.]|$)", name):
+        return "front"
+    return ""
+
+
+def pick_scans(urls):
+    """
+    The front scan and the candidates for the back scan, from a PicURL.
+
+    A bare export has two images, front|back. One uploaded from a CardCropper
+    output folder has four: the two scans plus their two crop sheets, in the
+    Crop tab's order — `front, back, front-crops, back-crops` by default, or
+    `front, front-crops, back, back-crops` when interleaved. Filenames that
+    still say which is which are believed; otherwise the back is tried at the
+    second position, then the third, and a crop sheet in that slot is caught
+    by the card-shape check rather than scored as a back.
+
+    Returns (front, [back candidates], problem). Photos this module hosted
+    itself are never scans.
+    """
+    scans = [u for u in urls if not _own_photo(u)]
+    if len(scans) == 2:
+        return scans[0], [scans[1]], ""
+    if len(scans) == 4:
+        roles = [_role(u) for u in scans]
+        if roles.count("front") == 1 and roles.count("back") == 1:
+            return scans[roles.index("front")], [scans[roles.index("back")]], ""
+        return scans[0], [scans[1], scans[2]], ""
+    return None, [], (f"{len(scans)} image(s) in {cu.PICS}, expected front|back "
+                      "or front|back|front-crops|back-crops")
+
+
 def look_at(rec):
     """The file worth opening for a card, relative to the output folder."""
     base = f"cards/{safe_name(rec['sku'])}/"
@@ -325,10 +364,9 @@ def _process(sheet, row, out_dir, thresholds, refresh, crops, fetcher, uploader)
     notes = []
 
     urls = cu.pic_urls(sheet.get(row, cu.PICS))
-    scans = [u for u in urls if not _own_photo(u)]
-    if len(scans) != 2:
-        rec.update(triage="no-scan",
-                   note=f"{len(scans)} scan(s) in {cu.PICS}, expected front|back")
+    front_url, back_urls, problem = pick_scans(urls)
+    if problem:
+        rec.update(triage="no-scan", note=problem)
         return rec, [], []
 
     folder = safe_name(sku)
@@ -337,13 +375,20 @@ def _process(sheet, row, out_dir, thresholds, refresh, crops, fetcher, uploader)
     os.makedirs(raw, exist_ok=True)
     faces = {}
     try:
-        for face, url in (("front", scans[0]), ("back", scans[1])):
-            blob = fetcher(url, os.path.join(raw, f"{folder}_{face}.jpg"), refresh)
+        attempts = [("front", front_url, 0)] + \
+            [("back", u, n) for n, u in enumerate(back_urls)]
+        for face, url, n in attempts:
+            if face in faces:
+                continue
+            cache = os.path.join(raw, f"{folder}_{face}{'' if not n else n + 1}.jpg")
+            blob = fetcher(url, cache, refresh)
             source = imaging.load(io.BytesIO(blob))
             # CardUploader scans are on the feeder's black bed.
             exact, padded, angle, _ = imaging.straighten(source)
             ok, why = imaging.detection_ok(exact, source)
             if not ok and face == "back":
+                if n + 1 < len(back_urls):
+                    continue        # a crop sheet in this slot; try the next
                 # The score is read off the back border. With the border not
                 # found, any number here is a measurement of the scanner bed.
                 raise ValueError(f"back: {why}")
