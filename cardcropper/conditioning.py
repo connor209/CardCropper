@@ -54,6 +54,20 @@ HOLD = "HOLD"
 #: NM stays NM.
 LIST_AS = {"pokemon": {"NM": "LP"}, "yugioh": {}}
 
+#: Any crease makes a card HP at best (house decision, 15 Oct 2026, adopting
+#: the 9 Oct crease definition over the guide's "a single light crease: MP").
+#: A grade above HP whose notes mention a crease is a contradiction, and it is
+#: held rather than resolved either way: the crease may be real and the grade
+#: wrong, or the word may be loose. "No crease" and the like do not count.
+CREASE_FLOOR = "HP"
+_CREASE = re.compile(r"\bcreas(e|ed|es|ing)\b", re.I)
+_NO_CREASE = re.compile(r"\b(no|not a|without|free of|zero)\s+(visible\s+)?creas", re.I)
+
+
+def mentions_crease(*texts):
+    text = " ".join(t or "" for t in texts)
+    return bool(_CREASE.search(_NO_CREASE.sub("", text)))
+
 #: Where hosted listing photos go inside the bucket. Also how a re-run
 #: recognises its own photos already appended to a PicURL.
 PHOTO_PREFIX = "conditioning/"
@@ -546,6 +560,11 @@ def apply_grades(csv_path, review_path, out_dir=None, condition_map_path=None):
             continue
         if grade not in GRADES:
             hold(f"'{grade}' is not one of {'/'.join(GRADES)}")
+            continue
+        if GRADES.index(grade) < GRADES.index(CREASE_FLOOR) and \
+                mentions_crease(r.get("flaw_note"), r.get("evidence")):
+            hold(f"graded {grade} but the notes mention a crease — any crease is "
+                 f"{CREASE_FLOOR} or worse; regrade, or reword if there is no crease")
             continue
         listed = LIST_AS[cu.game(out, row)].get(grade, grade)
         if listed not in conditions:

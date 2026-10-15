@@ -129,6 +129,11 @@ purpose: copies of one card that grade differently are different products.
    score is not a grade and is back-only** — a card can score clean and still
    be LP. A re-run never overwrites a review sheet that has grades in it.
 
+   **Any crease is HP or worse** (house decision, 15 Oct 2026 — this replaces
+   the guide's "a single light crease: MP"). A card graded NM, LP or MP whose
+   flaw note or evidence mentions a crease is held at the write step rather
+   than listed; "no crease" does not count.
+
 3. **Record grades & re-fit triage** (`--cli calibrate`). The `looked = yes`
    grades go into a calibration ledger with the scores they got, and new
    thresholds are proposed from everything graded so far. Grades taken off the

@@ -290,6 +290,23 @@ def _run(work):
     check(any(g == "LP" and len(s) == 2 for _, g, s in applied.price_groups),
           "same title + same grade should price once")
 
+    # Any crease is HP at best: an MP with a crease in its notes is held.
+    for r in review:
+        if r["sku"] == "26.10.15-001-001":
+            r["flaw_note"] = "Light crease through the bottom-right corner."
+        if r["sku"] == "26.10.15-001-002":
+            r["evidence"] = "four corners clean, no crease on either side"
+    with open(res.review_path, "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=conditioning.REVIEW_FIELDS)
+        w.writeheader()
+        w.writerows(review)
+    applied = conditioning.apply_grades(export, res.review_path, out, cmap)
+    held = {r["CustomLabel"]: r["hold_reason"] for r in read_csv(applied.held_path)}
+    check("HP or worse" in held.get("26.10.15-001-001", ""), "a creased MP was written")
+    check("26.10.15-001-002" not in held, "'no crease' was read as a crease")
+    check(conditioning.mentions_crease("slight creasing on back") and
+          not conditioning.mentions_crease("No visible crease"), "crease wording")
+
     # A map that contradicts the confirmed NM strings is refused outright.
     m["NM"] = dict(m["NM"], **{"*ConditionID": "1000"})
     with open(cmap, "w", encoding="utf-8") as fh:
