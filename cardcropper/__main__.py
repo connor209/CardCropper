@@ -19,7 +19,7 @@ def main():
         from .cli import split_main as run
     else:
         from .gui import main as run
-    run()
+    sys.exit(run() or 0)
 
 
 if __name__ == "__main__":

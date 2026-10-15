@@ -835,15 +835,18 @@ def main():
     # Imported here rather than at the top: the split tab borrows from this
     # module, and by now this module has finished loading.
     from .stacks_tab import SplitTab
+    from .condition_tab import ConditionTab
 
     pages = {"crop": ttk.Frame(tabs), "folders": ttk.Frame(tabs),
-             "split": ttk.Frame(tabs)}
+             "split": ttk.Frame(tabs), "condition": ttk.Frame(tabs)}
     tabs.add(pages["crop"], text="Crop cards")
     tabs.add(pages["folders"], text="Scan folders")
     tabs.add(pages["split"], text="Split into stacks")
+    tabs.add(pages["condition"], text="Condition a CSV")
     crop = App(pages["crop"])
     FoldersTab(pages["folders"], settings)
     split = SplitTab(pages["split"], crop_settings=crop.crop_settings)
+    condition = ConditionTab(pages["condition"])
     # Open on whichever tab was in use last — someone who starts the day by
     # making folders should not have to click across to them every time.
     if settings.get("tab") in pages:
@@ -855,6 +858,7 @@ def main():
     # back, and never while something is running — updating restarts the app.
     from . import updater
     busy = lambda: any(t is not None and t.is_alive()                 # noqa: E731
-                       for t in (crop.worker, crop.planner, split.worker, split.planner))
+                       for t in (crop.worker, crop.planner, split.worker, split.planner,
+                                 condition.worker))
     root.after(1500, lambda: updater.offer(root, is_busy=busy))
     root.mainloop()

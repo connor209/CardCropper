@@ -1413,6 +1413,9 @@ def main():
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
+    from tests import conditioning_smoke
+    conditioning_smoke.main()
+
     print("smoke: ok")
     return 0
 
