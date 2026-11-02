@@ -103,6 +103,29 @@ def check_centering(work):
         check(abs(m.lr[0] - m0.lr[0]) < 1.0 and abs(m.tb[0] - m0.tb[0]) < 1.0,
               f"{name}: measured {m.summary()}, the scan reads {m0.summary()}")
 
+    # A black border on a black scanner bed, as a real Magic scan comes out:
+    # border and bed both clipped to 0,0,0, the card's edge surviving only as
+    # a faint line on the two sides the scanner light rakes across. The
+    # hidden edges are placed from the card's size at the scan's DPI.
+    def black_scan(borders, glint):
+        W, H = 744, 1039
+        L, R, T, B = borders
+        bed = Image.new("RGB", (W + 40, H + 40), (0, 0, 0))
+        d = ImageDraw.Draw(bed)
+        d.rectangle([20 + L, 20 + T, 20 + W - 1 - R, 20 + H - 1 - B], fill=(120, 90, 60))
+        if glint:
+            d.line([(20 + W - 1, 20), (20 + W - 1, 20 + H - 1)], fill=(45, 45, 45), width=2)
+            d.line([(20, 20 + H - 1), (20 + W - 1, 20 + H - 1)], fill=(45, 45, 45), width=2)
+        bed.info["dpi"] = (300, 300)
+        return bed
+    m = centering.measure(black_scan((40, 30, 45, 35), True))
+    check(m.trusted, f"black-on-black with edge lines should measure: {m.notes}")
+    check(abs(m.lr[0] - 57.1) < 1.0 and abs(m.tb[0] - 56.3) < 1.0,
+          f"black-on-black measured {m.summary()}, wanted 57.1 L/R, 56.3 T/B")
+    blind = centering.measure(black_scan((40, 30, 45, 35), False))
+    check(not blind.trusted and not centering.report(blind, blind)["trusted"],
+          "black-on-black with NO edge visible must not be graded from")
+
     # Grades follow the thresholds: a perfectly centred card makes every
     # company's top centering grade, and one at 75/25 makes none of them.
     perfect = grading.best_grades(50, 50, 50, 50)

@@ -87,6 +87,7 @@ class Side:
     inner: float                 # px, same frame
     bands: list = field(default_factory=list)   # border width per band, px
     sure: bool = True
+    edge: str = "seen"           # "line" (a bright edge line), "seen", or "estimated"
 
     @property
     def width(self):
@@ -149,6 +150,17 @@ class Measurement:
     def worst(self):
         """The larger share on either axis — what a grade threshold is read against."""
         return max(self.lr[0], self.tb[0])
+
+    @property
+    def trusted(self):
+        """
+        False when the measurement should not be graded from at all: the card
+        is cut off, its size disagrees with the scan's DPI, or no border was
+        found. Distinct from one uncertain line, which a person can check.
+        """
+        bad = ("runs off the scan", "edge was probably missed", "no consistent border",
+               "could not pick the card out")
+        return not any(any(b in n for b in bad) for n in self.notes)
 
     @property
     def sure(self):
@@ -418,6 +430,138 @@ def _profiles(arr, side, outer_px, depth, bands):
     return out
 
 
+def _outer_edge(vals, lines=True):
+    """
+    Where the card starts in a 1-D value profile running in from the bed.
+
+    Returns (edge, clear): the edge to a fraction of a pixel, and the first
+    position past anything that belongs to the edge itself — where the search
+    for the border's inner edge may begin.
+
+    Two kinds of edge turn up. Usually the card is simply brighter than the
+    bed, and the edge is where the profile is halfway up. But a BLACK border
+    on a black bed is not brighter at all — scanners clip both to 0,0,0 — and
+    the only trace of the card's edge is a thin bright line where the
+    scanner's light catches the cut. That line IS the edge, so its centre is
+    taken; and the search for the inner edge starts after it, or the line's
+    own falling side would be reported as the border's inner edge.
+    """
+    bg = float(np.median(vals[:3]))
+    lit = np.where(vals > bg + 10)[0]
+    if not len(lit):
+        return None, None
+    i0 = int(lit[0])
+    win = vals[i0:i0 + 8]
+    j = i0 + int(np.argmax(win))
+    pk = float(vals[j])
+    after = vals[j + 1:j + 7]
+    if lines and len(after) >= 4 and after.min() < bg + 0.4 * (pk - bg) and \
+            np.median(vals[j + 4:j + 14]) < bg + 0.4 * (pk - bg):
+        half = bg + 0.5 * (pk - bg)
+        lo, hi = j, j
+        while lo > 0 and vals[lo - 1] > half:
+            lo -= 1
+        while hi < len(vals) - 1 and vals[hi + 1] > half:
+            hi += 1
+        idx = np.arange(lo, hi + 1)
+        wts = vals[lo:hi + 1] - bg
+        return float((idx * wts).sum() / wts.sum()), -(hi + 2)
+    # The card's level is read well into it (the upper part of the next 20
+    # px), so a faint speck or moulding line just outside the card — which
+    # sets i0 — does not drag the halfway point down onto itself.
+    level = float(np.percentile(vals[i0:i0 + 20], 75)) if len(vals) > i0 + 20 else pk
+    pos = _edge_position(vals, (level + bg) / 2.0)
+    return pos, pos
+
+
+def _outline_box(value):
+    """
+    The card's extent from its OUTLINE rather than its area.
+
+    A row or column counts as card if a quarter of it is lit — which a filled
+    card manages easily, and so does the thin bright line that is all a black
+    border leaves on a black bed. `imaging._card_box` asks for 40% of the
+    area, and on a black-bordered card finds the artwork frame instead.
+    """
+    lit = value > imaging.INK_THRESHOLD * 0.6
+    cols = np.where(lit.mean(axis=0) > 0.25)[0]
+    rows = np.where(lit.mean(axis=1) > 0.25)[0]
+    if not len(cols) or not len(rows):
+        return None
+    return int(cols[0]), int(rows[0]), int(cols[-1]), int(rows[-1])
+
+
+def _straighten(im):
+    """
+    Deskew, then crop to the card's outline with a generous margin.
+
+    Returns (padded, angle, clipped): `clipped` names any side where the card
+    runs into the edge of the scan — a scanner auto-crop that cut it off, which
+    no measurement can recover.
+    """
+    angle = imaging._skew_degrees(imaging._mask(im))
+    rot = im.rotate(-angle, resample=Image.BICUBIC, expand=True, fillcolor=(0, 0, 0))
+    value = np.asarray(rot).astype(int).max(axis=2)
+    box = _outline_box(value)
+    W, H = rot.size
+    if box is None:
+        return rot, angle, []
+    x0, y0, x1, y1 = box
+    # A card cut off by the scanner's auto-crop has its artwork running
+    # straight into the scan's own edge. Judged on the scan before rotation:
+    # a tight crop that leaves only a few pixels of bed is not cut off, and
+    # the black wedges a rotation adds would hide the difference.
+    src = np.asarray(im).astype(int).max(axis=2) > imaging.INK_THRESHOLD
+    clipped = [n for n, strip in (("left", src[:, :2]), ("right", src[:, -2:]),
+                                  ("top", src[:2]), ("bottom", src[-2:]))
+               if strip.mean() > 0.3]
+    m = round(0.04 * (x1 - x0))
+    return rot.crop((x0 - m, y0 - m, x1 + 1 + m, y1 + 1 + m)), angle, clipped
+
+
+def _rebuild_hidden_edges(sides, dpi, card_mm):
+    """
+    Put back a card edge the scan did not record, from the one opposite it.
+
+    A black border on a black bed is clipped to 0,0,0 along with the bed, and
+    the card's edge survives only where the scanner's light rakes across the
+    cut — usually two sides, sometimes one. On a side with no such line, the
+    "edge" detection found is really the artwork frame: the border's INNER
+    edge. With the scan's DPI known, the card's size puts the missing outer
+    edge exactly: 63 mm from the other side's line.
+
+    Only done when the pair disagrees with the card's size by more than 3%,
+    and only from a side whose edge was seen as a line. The side rebuilt is
+    marked "estimated" — card sizes vary by a tenth of a millimetre or so,
+    which is a pixel at 300 DPI.
+    """
+    notes = []
+    px_per_mm = dpi / 25.4
+    for a, b, mm in (("left", "right", card_mm[0]), ("top", "bottom", card_mm[1])):
+        sa, sb = sides[a], sides[b]
+        want = mm * px_per_mm
+        have = sb.outer - sa.outer
+        if abs(have - want) / want <= 0.03:
+            continue
+        lines = [s for s in (sa, sb) if s.edge == "line"]
+        if len(lines) != 1:
+            continue
+        seen = lines[0]
+        hidden = sb if seen is sa else sa
+        direction = 1 if hidden is sb else -1
+        # What was found as the hidden side's outer edge is the frame —
+        # its inner edge. Keep it there; move the outer edge out to size.
+        hidden.inner = hidden.outer
+        hidden.outer = seen.outer + direction * want
+        hidden.bands = []
+        hidden.edge = "estimated"
+        hidden.sure = True
+        notes.append(f"{hidden.name} edge not visible on the scan (black on "
+                     f"black) — placed from the {seen.name} edge and the card's "
+                     f"{mm:g} mm size")
+    return notes
+
+
 def measure(im, card_mm=CARD_MM):
     """
     Measure one face. `im` is a scan as loaded by `imaging.load`.
@@ -425,13 +569,14 @@ def measure(im, card_mm=CARD_MM):
     Returns a Measurement whose coordinates are in a deskewed copy of the card
     with a margin of background around it.
     """
+    dpi = (im.info.get("dpi") or (0, 0))[0]
     im, how = isolate(im)
-    _exact, padded, angle = imaging.straighten(im)
+    padded, angle, clipped = _straighten(im)
     arr = np.asarray(padded.convert("RGB")).astype(float)
     h, w = arr.shape[:2]
     value = arr.max(axis=2)
 
-    box = imaging._card_box(value > imaging.INK_THRESHOLD)
+    box = _outline_box(value)
     if box is None:
         box = (0, 0, w - 1, h - 1)
     x0, y0, x1, y1 = box
@@ -442,19 +587,23 @@ def measure(im, card_mm=CARD_MM):
     for name in SIDES:
         dim = across[name]
         depth = int(dim * SEARCH[1]) + 12
-        widths, outers = [], []
+        widths, outers, kinds = [], [], []
         for start, prof in _profiles(arr, name, rough[name], depth, BANDS):
             vals = prof.max(axis=1)
-            # Halfway between the bed and the border is where the card starts.
-            card_level = np.median(vals[min(len(vals) - 1, 14):min(len(vals), 24)]) \
-                if len(vals) > 24 else vals.max()
-            outer = _edge_position(vals, (card_level + vals[:3].mean()) / 2.0)
+            # Edge LINES only on a scan: black-on-black clipping is a scanner
+            # bed's doing, and in a photo a thin line outside the card is far
+            # more likely the slab's moulding than the card's cut.
+            outer, clear = _outer_edge(vals, lines=(how == "scan"))
             if outer is None:
                 widths.append(None)
                 continue
-            s0 = int(math.ceil(outer + dim * SEARCH[0])) + 1
+            kinds.append("line" if clear < 0 else "seen")
+            clear = abs(clear)
+            span = max(2, round(dim * 0.006))
+            s0 = max(int(math.ceil(outer + dim * SEARCH[0])) + 1,
+                     int(math.ceil(clear)) + span + 1)
             s1 = int(outer + dim * SEARCH[1])
-            inner = _first_step(prof, s0, s1, span=max(2, round(dim * 0.006)))
+            inner = _first_step(prof, s0, s1, span=span)
             outers.append(start + outer)
             widths.append(None if inner is None else inner - outer)
 
@@ -477,7 +626,8 @@ def measure(im, card_mm=CARD_MM):
             o, i = (w - 1) - outer_pos + 1, (w - 1) - outer_pos + 1 - width
         else:
             o, i = (h - 1) - outer_pos + 1, (h - 1) - outer_pos + 1 - width
-        sides[name] = Side(name, o, i, widths, sure)
+        edge = "line" if kinds.count("line") > len(kinds) / 2 else "seen"
+        sides[name] = Side(name, o, i, widths, sure, edge)
 
     unsure = [s.name for s in sides.values() if not s.sure]
     if len(unsure) >= 3:
@@ -487,12 +637,24 @@ def measure(im, card_mm=CARD_MM):
     else:
         notes += [f"{n} border is uncertain — check the line" for n in unsure
                   if sides[n].width]
+    if clipped:
+        notes.insert(0, f"card runs off the scan on the {' and '.join(clipped)} — "
+                        "the scanner cut it off; rescan before trusting this")
     if "not isolated" in how:
         notes.insert(0, "could not pick the card out of this photo — the lines "
                         "are likely on the wrong thing")
+    if dpi and not clipped:
+        notes += _rebuild_hidden_edges(sides, dpi, card_mm)
     m = Measurement(padded, sides, angle, card_mm, notes)
     m.source = how
     m.recompute()
+    # The scan's own DPI against the card's measured size is a check on the
+    # outer edges: a 63 mm card at 300 DPI is 744 px. Off by more than 3% and
+    # an edge was missed — on a black border, usually because the scanner
+    # left no trace of it at all.
+    if dpi and m.dpi and abs(m.dpi - dpi) / dpi > 0.03 and not clipped:
+        m.notes.insert(0, f"card measures as {m.dpi:.0f} DPI but the scan says "
+                          f"{dpi:.0f} — the card's edge was probably missed")
     return m
 
 
@@ -509,6 +671,14 @@ def report(front, back):
     out["grades"] = grading.best_grades(
         front.lr[0], front.tb[0],
         back.lr[0] if back else None, back.tb[0] if back else None)
+    # A grade read off a measurement that failed its own checks is worse than
+    # none: it looks exactly like a real one. Say so on every row.
+    out["trusted"] = front.trusted and (back is None or back.trusted)
+    if not out["trusted"]:
+        for g in out["grades"]:
+            g["label"] = f"? {g['label']}"
+            g["short"] = "?" + g["short"]
+            g["grade"] = None
     return out
 
 
@@ -611,6 +781,9 @@ def sheet(front, back, path, title=""):
 
     y = 70 + face_h + pad
     d.text((pad, y), "Best grade on centering alone", fill=TEXT, font=mid)
+    if not rep["trusted"]:
+        d.text((pad + 400, y + 2), "— NOT RELIABLE: the measurement failed its own "
+                                   "checks (see the notes above)", fill=WARN, font=small)
     y += 44
     for g in rep["grades"]:
         colour = GOOD if g["grade"] else WARN
