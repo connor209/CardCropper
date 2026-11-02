@@ -89,6 +89,55 @@ The original scans are copied, never moved. If a pairing turns out to be off by
 one, the fix is to pair again — only possible while the scans are still where
 the scanner left them.
 
+## Centering
+
+Centering is the one part of a grade that is a measurement rather than a
+judgement, so it can be read off your scans before a card is sent anywhere.
+Every grader writes it the same way — the wider of two opposite borders as a
+share of the pair, so **55/45** means the wide border is 55% of the two — and
+checks left/right and top/bottom separately, the worse one counting. Fronts
+are held much tighter than backs.
+
+**Centering…** opens the selected card's front and back with eight lines on
+each: cyan on the card's edge, magenta on the inside of each border. Beside
+them are the ratios, every border's width in millimetres, and the best grade
+each company could give **on centering alone**. Click a line to select it,
+then drag it or nudge it with the arrow keys (0.25 px a press, Shift for
+2 px); the loupe shows the selected line at 6x. Everything follows live.
+**Save sheet…** writes the lot as one image.
+
+Tick **Measure centering too** (or pass `--centering`) and a batch also writes
+`centering\0001_centering.jpg` per card and a `centering.csv` for the batch,
+with a column per grader. The sheets go in a subfolder so the top level stays
+four images per card in upload order.
+
+How it measures:
+
+- The card's own width is the ruler (63 mm for a standard card), so a scan
+  with no DPI recorded still gives real millimetres.
+- Edges are located to a fraction of a pixel. That matters: at 300 DPI a
+  Pokémon border is ~36 px, so one pixel is ~1.5 points of ratio — the whole
+  gap between 55/45 and 56/44.
+- Each side is measured in five bands along its length. A border that tapers
+  — a skewed cut, or art bleeding into it — is called out rather than averaged
+  away.
+- Full-art cards have no border to find. They are flagged; set the lines by
+  hand against whatever the grader would use (a frame line, the text box).
+
+| Grader | How centering counts | Best centering grade (front / back) |
+|---|---|---|
+| PSA | Caps the grade | 10: 55/45 / 75/25 · 9: 60/40 / 90/10 |
+| Beckett | Subgrade; final grade rarely more than one above the lowest | 10: 50/50 / 55/45 · 9.5: 55/45 / 60/40 |
+| CGC | Caps the grade | Pristine 10: 50/50 · Gem Mint 10: 55/45 / 75/25 |
+| SGC | Caps the grade (front only published) | Pristine 10: 50/50 · 10: 55/45 |
+| ACE (UK) | Subgrade; total never more than one above the lowest | 10: under 60/40 front *and* back · 9: 65/35 / 70/30 |
+| TAG | Machine-scored | Pristine 10: 51/49 / 52/48 · 10: 55/45 / 65/35 (TCG) |
+
+The full tables, with their sources, are in `cardcropper/grading.py`. The
+Beckett and SGC figures come from secondary sources — their own pages could
+not be read automatically — and graders do change these (PSA tightened its 10
+in 2025), so treat the grade shown as a ceiling, not a prediction.
+
 ## From the command line
 
 The same engine, without the window:
@@ -96,6 +145,7 @@ The same engine, without the window:
 ```
 CardCropper.exe --cli "C:\scans" --out "C:\scans\cropped"
 CardCropper.exe --cli "C:\scans" --out "C:\out" --style grading --naming sequence
+CardCropper.exe --cli "C:\scans" --out "C:\out" --centering
 ```
 
 Or from a checkout: `python -m cardcropper --cli scans --out out`.
