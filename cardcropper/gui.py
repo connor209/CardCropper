@@ -90,6 +90,8 @@ class App(ttk.Frame):
         ttk.Button(bar, text="Remove", command=self.remove).pack(side="left", padx=(6, 0))
         ttk.Button(bar, text="▲", width=3, command=lambda: self.move(-1)).pack(side="left", padx=(6, 0))
         ttk.Button(bar, text="▼", width=3, command=lambda: self.move(1)).pack(side="left", padx=(2, 0))
+        ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=10)
+        ttk.Button(bar, text="Centering…", command=self.open_centering).pack(side="left")
 
         self.hint = ttk.Label(
             self, foreground="#666",
@@ -147,9 +149,15 @@ class App(ttk.Frame):
         ttk.Checkbutton(box, text="Copy the original scans into the output folder too",
                         variable=self.copy_var, command=self._refresh)\
             .grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.measure_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(box, text="Measure centering too — a sheet per card in "
+                                  "centering\\ and a centering.csv with the best grade "
+                                  "per grading company",
+                        variable=self.measure_var)\
+            .grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
         self.preview = ttk.Label(box, foreground="#666")
-        self.preview.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        self.preview.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
     def _build_run(self):
         bar = ttk.Frame(self)
@@ -283,6 +291,21 @@ class App(ttk.Frame):
         self._refresh()
         self.tree.selection_set([str(j + 1) for j in moved])
 
+    def open_centering(self):
+        """Measure the selected card (or the first) in its own window."""
+        if not self.cards:
+            messagebox.showinfo(APP_NAME, "Add some scans first.")
+            return
+        idx = self._selected()
+        i = idx[0] if idx else 0
+        card = self.cards[i]
+        from .centering_gui import CenteringWindow
+        try:
+            CenteringWindow(self.winfo_toplevel(), card.front, card.back,
+                            label=f"card {i + 1} — {card.label}")
+        except Exception as exc:                            # noqa: BLE001
+            messagebox.showerror(APP_NAME, f"Could not measure this card:\n\n{exc}")
+
     # ------------------------------------------------------------ running
 
     def start(self):
@@ -324,6 +347,7 @@ class App(ttk.Frame):
                 done, failed, failures = batch.run(
                     plan, out, naming=naming, order=order, style=style,
                     copy_originals=self.copy_var.get(),
+                    measure=self.measure_var.get(),
                     progress=lambda *a: self.events.put(("card",) + a),
                     should_stop=self.stop_flag.is_set)
                 self.events.put(("finished", done, failed, failures))

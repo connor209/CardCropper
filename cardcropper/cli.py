@@ -31,6 +31,10 @@ def main():
                          "(default: crops-last)")
     ap.add_argument("--no-originals", action="store_true",
                     help="write only the crops, leaving the scans where they are")
+    ap.add_argument("--centering", action="store_true",
+                    help="also measure each card's centering: a sheet per card in "
+                         "centering/ and a centering.csv with the best grade each "
+                         "grading company could give on centering alone")
     args = ap.parse_args()
 
     paths = []
@@ -64,7 +68,8 @@ def main():
 
     done, failed, failures = batch.run(
         plan, args.out, naming=args.naming, order=args.order, style=args.style,
-        copy_originals=not args.no_originals, progress=report)
+        copy_originals=not args.no_originals, progress=report,
+        measure=args.centering)
     print(f"\n{done} card(s) written to {args.out}"
           + (f", {failed} failed" if failed else ""))
     # The failures again at the end. In a batch of a hundred the one that

@@ -7,13 +7,14 @@ the part that has to be right for a bulk uploader reading the folder in
 filename order.
 """
 
+import csv
 import os
 import re
 import shutil
 import time
 from dataclasses import dataclass, field
 
-from . import imaging
+from . import centering, imaging
 
 #: Where a crop sits relative to its card's original scans.
 #:
@@ -200,13 +201,49 @@ def process_card(card, out_dir, index, naming="grouped", order="crops-last",
     return [n for _, n in names], notes
 
 
+#: Where centering sheets go, inside the output folder. A subfolder rather than
+#: alongside the cards: the top level is four images per card in upload
+#: order, and a fifth would be attached to the listing by a bulk uploader.
+CENTERING_DIR = "centering"
+CENTERING_CSV = "centering.csv"
+
+
+def measure_centering(card, out_dir, index):
+    """
+    Measure one card's centering, write its sheet, and return its CSV row.
+
+    Never fatal to the card: the crops are the job, and a card whose border
+    could not be found still has perfectly good corners.
+    """
+    front = centering.measure(_io(imaging.load, card.front))
+    back = centering.measure(_io(imaging.load, card.back))
+    folder = os.path.join(out_dir, CENTERING_DIR)
+    os.makedirs(folder, exist_ok=True)
+    centering.sheet(front, back, os.path.join(folder, f"{index:04d}_centering.jpg"),
+                    title=f"Card {index} — {card.label}")
+    return centering.csv_row(f"{index:04d} {card.label}", centering.report(front, back))
+
+
+def write_centering_csv(rows, out_dir):
+    if not rows:
+        return None
+    path = os.path.join(out_dir, CENTERING_CSV)
+    keys = list(rows[0])
+    with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=keys)
+        w.writeheader()
+        w.writerows(rows)
+    return path
+
+
 def run(plan, out_dir, naming="grouped", order="crops-last", style="grading",
-        copy_originals=True, progress=None, should_stop=None):
+        copy_originals=True, progress=None, should_stop=None, measure=False):
     """
     Process every card in `plan`, reporting as it goes.
 
     `progress(index, total, card, filenames, notes, error)` is called once per
-    card. A card that fails does not stop the batch: a hundred-card run that
+    card. With `measure`, each card's centering is measured too: a sheet per
+    card under `centering/`, and one `centering.csv` for the batch. A card that fails does not stop the batch: a hundred-card run that
     aborts on card 3 has wasted the operator's time in a way that reporting
     card 3 and carrying on does not.
     """
@@ -214,12 +251,24 @@ def run(plan, out_dir, naming="grouped", order="crops-last", style="grading",
     total = len(plan.cards)
     done = failed = 0
     failures = []
+    rows = []
     for i, card in enumerate(plan.cards, 1):
         if should_stop is not None and should_stop():
             break
         try:
             names, notes = process_card(card, out_dir, i, naming, order, style,
                                         copy_originals)
+            if measure:
+                try:
+                    row = measure_centering(card, out_dir, i)
+                    rows.append(row)
+                    notes.append(f"centering: front {row['front_lr']} L/R, "
+                                 f"{row['front_tb']} T/B; back {row['back_lr']}, "
+                                 f"{row['back_tb']}")
+                    if row["check"]:
+                        notes.append(f"centering — check by hand: {row['check']}")
+                except Exception as exc:                # noqa: BLE001
+                    notes.append(f"centering not measured: {exc}")
             done += 1
             if progress:
                 progress(i, total, card, names, notes, None)
@@ -234,4 +283,5 @@ def run(plan, out_dir, naming="grouped", order="crops-last", style="grading",
                     pass
             if progress:
                 progress(i, total, card, [], [], exc)
+    write_centering_csv(rows, out_dir)
     return done, failed, failures
