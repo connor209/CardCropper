@@ -364,38 +364,82 @@ def _midpoint(seg, i, span):
     return float(i)
 
 
-def _first_step(profile, start, stop, span=2):
+def _gradient(profile, span):
     """
-    Where the border's colour first changes decisively, walking inward.
+    Colour change along a profile, measured across `span` pixels either side
+    of each point rather than between neighbours. A printed border often fades
+    into the frame over ten pixels or more (a Pokémon back's gold into its
+    blue); pixel to pixel that change is no bigger than print texture, over a
+    span it stands out, and a sharp edge still reads as sharp.
 
-    `profile` is an (N, 3) RGB array running from outside the card inward.
-    The change is measured across `span` pixels either side of each point,
-    not between neighbours: a printed border often fades into the frame over
-    ten pixels or more (a Pokémon back's gold into its blue), and pixel to
-    pixel that change is no bigger than print texture. Over a span it stands
-    out, and a sharp edge still reads as sharp.
-
-    The FIRST qualifying peak wins, not the biggest — artwork deeper in
-    usually has harder edges than the border does. Its position is then
-    refined by `_midpoint`.
+    Returns (smoothed profile, gradient).
     """
     seg = _smooth(profile.astype(float), 3)
     n = len(seg)
-    stop = min(stop, n - span - 1)
+    grad = np.zeros(n)
+    if n > 2 * span:
+        grad[span:n - span] = np.linalg.norm(seg[2 * span:] - seg[:-2 * span], axis=1)
+    return seg, grad
+
+
+def _first_peak(grad, start, stop):
+    """
+    The FIRST strong peak in grad[start:stop], not the biggest: artwork deeper
+    in usually has harder edges than the border does.
+    """
+    stop = min(stop, len(grad) - 1)
     if stop - start < 6:
         return None
-    grad = np.zeros(n)
-    grad[span:n - span] = np.linalg.norm(seg[2 * span:] - seg[:-2 * span], axis=1)
     window = grad[start:stop]
-    if not len(window) or window.max() < MIN_STEP:
+    if window.max() < MIN_STEP:
         return None
     floor = max(MIN_STEP, 0.3 * window.max())
     for j in range(1, len(window) - 1):
         g = window[j]
         if g >= floor and g >= window[j - 1] and g >= window[j + 1]:
-            i = start + j
-            return _midpoint(seg, i, span)
+            return start + j
     return None
+
+
+def _inner_edges(bands, span, lo, hi):
+    """
+    The border's inner edge on one side, agreed across all its bands.
+
+    A border's inner edge is a straight line at the same depth all along the
+    side; artwork edges fall at whatever depth the artwork puts them. So the
+    bands' gradients are lined up on each band's own outer edge and ADDED, and
+    the first strong peak of the sum is the border. A band where the edge is
+    faint — a Pokémon back where the swirl turns as dark as the border — still
+    contributes, instead of wandering off into the artwork on its own.
+
+    Each band is then measured to a fraction of a pixel near that depth, so a
+    border that genuinely tapers (a skewed cut) still shows the taper.
+
+    `bands` is [(seg, grad, outer)], positions in each band's own profile.
+    Returns a width per band, or None for each when there is no agreement.
+    """
+    if not bands:
+        return []
+    n = max(0, min(len(g) - int(round(o)) for _, g, o in bands))
+    if n <= hi:
+        hi = n - 1
+    total = np.zeros(n)
+    for _, g, o in bands:
+        k = int(round(o))
+        total += g[k:k + n]
+    depth = _first_peak(total / len(bands), lo, hi)
+    if depth is None:
+        return [None] * len(bands)
+    out = []
+    for seg, g, o in bands:
+        k = int(round(o)) + depth
+        # Settle on this band's own peak within a span of the agreed depth —
+        # but never back toward the outer edge past where the search began.
+        w0 = max(int(round(o)) + lo, k - span)
+        w1 = min(len(g), k + span + 1)
+        k = w0 + int(np.argmax(g[w0:w1]))
+        out.append(_midpoint(seg, k, span) - o)
+    return out
 
 
 def _profiles(arr, side, outer_px, depth, bands):
@@ -471,7 +515,13 @@ def _outer_edge(vals, lines=True):
     # sets i0 — does not drag the halfway point down onto itself.
     level = float(np.percentile(vals[i0:i0 + 20], 75)) if len(vals) > i0 + 20 else pk
     pos = _edge_position(vals, (level + bg) / 2.0)
-    return pos, pos
+    if pos is None:
+        return None, None
+    # Clear of the edge once the ramp has all but reached the card's level —
+    # a photo through slab plastic softens the edge over several pixels, and
+    # the search for the inner edge must not start on that ramp.
+    up = np.where(vals[int(pos):] >= bg + 0.85 * (level - bg))[0]
+    return pos, (int(pos) + int(up[0])) if len(up) else pos
 
 
 def _outline_box(value):
@@ -587,7 +637,9 @@ def measure(im, card_mm=CARD_MM):
     for name in SIDES:
         dim = across[name]
         depth = int(dim * SEARCH[1]) + 12
-        widths, outers, kinds = [], [], []
+        widths, outers, kinds, found = [], [], [], []
+        span = max(2, round(dim * 0.006))
+        lo, clears = int(math.ceil(dim * SEARCH[0])) + 1, []
         for start, prof in _profiles(arr, name, rough[name], depth, BANDS):
             vals = prof.max(axis=1)
             # Edge LINES only on a scan: black-on-black clipping is a scanner
@@ -595,17 +647,18 @@ def measure(im, card_mm=CARD_MM):
             # more likely the slab's moulding than the card's cut.
             outer, clear = _outer_edge(vals, lines=(how == "scan"))
             if outer is None:
-                widths.append(None)
                 continue
             kinds.append("line" if clear < 0 else "seen")
-            clear = abs(clear)
-            span = max(2, round(dim * 0.006))
-            s0 = max(int(math.ceil(outer + dim * SEARCH[0])) + 1,
-                     int(math.ceil(clear)) + span + 1)
-            s1 = int(outer + dim * SEARCH[1])
-            inner = _first_step(prof, s0, s1, span=span)
+            clears.append(abs(clear) - outer)
+            seg, grad = _gradient(prof, span)
+            found.append((seg, grad, outer))
             outers.append(start + outer)
-            widths.append(None if inner is None else inner - outer)
+        if found:
+            # Start past an edge line, if there is one, so its falling side
+            # is not taken for the border's inner edge.
+            lo = max(lo, int(math.ceil(max(clears))) + span + 1)
+            widths = _inner_edges(found, span, lo, int(dim * SEARCH[1]))
+        widths += [None] * (BANDS - len(widths))
 
         good = [x for x in widths if x is not None]
         outer_pos = float(np.median(outers)) if outers else float(rough[name])
