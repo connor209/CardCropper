@@ -121,6 +121,12 @@ How it measures:
 - Each side is measured in five bands along its length. A border that tapers
   — a skewed cut, or art bleeding into it — is called out rather than averaged
   away.
+- It works on photos as well as scans: a card on a light table, a slab
+  photographed straight on, or a cut-out product photo (where the slab's
+  plastic is see-through and the card is not). It picks out the largest
+  card-shaped thing in the picture, which skips a slab's label. A photo
+  through a slab is lower resolution than a scan — around 200 DPI, where a
+  pixel is about a point of ratio — so treat ±1 point as the margin there.
 - Full-art cards have no border to find. They are flagged; set the lines by
   hand against whatever the grader would use (a frame line, the text box).
 

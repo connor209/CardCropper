@@ -35,10 +35,11 @@ window, and the ratios follow it.
 """
 
 import math
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from . import grading, imaging
 
@@ -61,10 +62,11 @@ BAND_SPAN = (0.15, 0.85)
 #: off-centre card, whose wide side can be two or three times the norm.
 SEARCH = (0.006, 0.25)
 
-#: A colour change has to be at least this large (RGB distance per pixel,
-#: after smoothing) to count as the border's inner edge. Below it is print
-#: texture and scanner noise.
-MIN_STEP = 9.0
+#: A colour change has to be at least this large (RGB distance across the
+#: measuring span, after smoothing) to count as the border's inner edge.
+#: Below it is print texture, scanner noise, and the slow darkening some
+#: borders have toward their inside.
+MIN_STEP = 28.0
 
 #: Bands on one side that disagree by more than this fraction of the median
 #: border width make that side "unsure" — usually art bleeding into the border
@@ -188,6 +190,112 @@ def fmt_ratio(r):
     return f"{pct:.1f}/{100 - pct:.1f}"
 
 
+# ---------------------------------------------------------------- finding the card
+
+
+def load(path):
+    """
+    Open an image for measuring, KEEPING any transparency.
+
+    Product photos of slabbed cards are often cut out: the slab's plastic is
+    semi-transparent and the card is solid. That alpha channel is the cleanest
+    outline of the card there is, and converting to RGB on load would throw it
+    away — `imaging.load` does, because a crop does not need it.
+    """
+    im = ImageOps.exif_transpose(Image.open(path))
+    if im.mode in ("RGBA", "LA", "PA") or (im.mode == "P" and "transparency" in im.info):
+        return im.convert("RGBA")
+    return im.convert("RGB")
+
+
+def _components(mask):
+    """Connected regions of a small boolean mask: [(area, (x0, y0, x1, y1))]."""
+    h, w = mask.shape
+    seen = np.zeros_like(mask, dtype=bool)
+    out = []
+    for y, x in zip(*np.nonzero(mask)):
+        if seen[y, x]:
+            continue
+        seen[y, x] = True
+        q = deque([(y, x)])
+        area, x0, y0, x1, y1 = 0, x, y, x, y
+        while q:
+            cy, cx = q.popleft()
+            area += 1
+            x0, x1, y0, y1 = min(x0, cx), max(x1, cx), min(y0, cy), max(y1, cy)
+            for ny, nx in ((cy - 1, cx), (cy + 1, cx), (cy, cx - 1), (cy, cx + 1)):
+                if 0 <= ny < h and 0 <= nx < w and mask[ny, nx] and not seen[ny, nx]:
+                    seen[ny, nx] = True
+                    q.append((ny, nx))
+        out.append((area, (x0, y0, x1, y1)))
+    return out
+
+
+def _card_region(weight):
+    """
+    The largest card-shaped region of a 0-1 `weight` map, as a full-size box.
+
+    Card-shaped: about 2.5 x 3.5, and filling most of its bounding box (the
+    rounded corners take a little). That is what rules out a slab's label,
+    which is solid too but three times as wide as it is tall.
+    """
+    h, w = weight.shape
+    k = max(1, int(max(h, w) / 360))
+    small = weight[::k, ::k] > 0.5
+    best = None
+    for area, (x0, y0, x1, y1) in _components(small):
+        bw, bh = x1 - x0 + 1, y1 - y0 + 1
+        if bw < 10 or bh < 10:
+            continue
+        aspect = max(bw, bh) / min(bw, bh)
+        fill = area / float(bw * bh)
+        if 1.2 <= aspect <= 1.65 and fill > 0.8 and (best is None or area > best[0]):
+            best = (area, (x0 * k, y0 * k, (x1 + 1) * k, (y1 + 1) * k))
+    return best[1] if best else None
+
+
+def isolate(im):
+    """
+    The card alone on black, so the scan pipeline can measure it whatever it
+    was photographed on.
+
+    A flatbed scan already IS a card on black, and passes through untouched.
+    Anything else — a cut-out product photo, a slab on a white table — gets a
+    0-1 weight per pixel for "this is card", from transparency where there is
+    any and from difference to the background colour where there is not. The
+    weight is soft at the outline rather than a hard mask, so the card's edge
+    keeps the sub-pixel position the measurement depends on.
+
+    Returns (image, how) — `how` says which route was taken, for the notes.
+    """
+    arr = np.asarray(im.convert("RGBA")).astype(float)
+    rgb, alpha = arr[..., :3], arr[..., 3]
+    if im.mode == "RGBA" and (alpha < 250).mean() > 0.02:
+        # Slab plastic sits at alpha 50-120; the card and label are opaque.
+        weight = np.clip((alpha - 170.0) / 80.0, 0, 1)
+        rgb = rgb * (alpha[..., None] / 255.0) + 255.0 * (1 - alpha[..., None] / 255.0)
+        how = "cut-out photo"
+    else:
+        edge = np.concatenate([rgb[:4].reshape(-1, 3), rgb[-4:].reshape(-1, 3),
+                               rgb[:, :4].reshape(-1, 3), rgb[:, -4:].reshape(-1, 3)])
+        bg = np.median(edge, axis=0)
+        if bg.max() <= imaging.INK_THRESHOLD:
+            return im.convert("RGB"), "scan"
+        dist = np.linalg.norm(rgb - bg, axis=2)
+        weight = np.clip((dist - 18.0) / 30.0, 0, 1)
+        how = "photo"
+    box = _card_region(weight)
+    if box is None:
+        return Image.fromarray(rgb.astype(np.uint8)), how + " — card not isolated"
+    x0, y0, x1, y1 = box
+    pad = max(4, (x1 - x0) // 60)
+    keep = np.zeros_like(weight)
+    keep[max(0, y0 - pad):y1 + pad, max(0, x0 - pad):x1 + pad] = 1.0
+    w = weight * keep
+    out = rgb * w[..., None]
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8)), how
+
+
 # ---------------------------------------------------------------- detection
 
 
@@ -220,38 +328,61 @@ def _edge_position(values, threshold):
     return (i - 1) + (threshold - lo) / max(hi - lo, 1e-6)
 
 
-def _first_step(profile, start, stop, depth_hint=None):
+def _midpoint(seg, i, span):
+    """
+    Sub-pixel position of the colour change centred near `i`: where the
+    colour is halfway from the colour before it to the colour after it.
+
+    Halfway along the before-to-after colour line, not halfway in brightness —
+    gold to blue changes hue far more than it changes brightness. Unbiased for
+    a sharp step and a soft fade alike, which a peak-of-the-gradient estimate
+    is not once a second edge sits close by.
+    """
+    a = max(0, i - span - 1)
+    b = min(len(seg) - 1, i + span + 1)
+    c0, c1 = seg[a], seg[b]
+    d = c1 - c0
+    dd = float(d @ d)
+    if dd < 1e-6:
+        return float(i)
+    t = (seg[a:b + 1] - c0) @ d / dd
+    for k in range(len(t) - 1):
+        if t[k] < 0.5 <= t[k + 1]:
+            return a + k + (0.5 - t[k]) / max(t[k + 1] - t[k], 1e-9)
+    return float(i)
+
+
+def _first_step(profile, start, stop, span=2):
     """
     Where the border's colour first changes decisively, walking inward.
 
     `profile` is an (N, 3) RGB array running from outside the card inward.
-    The border colour is taken just past `start`; the inner edge is the first
-    place the colour departs from it by more than MIN_STEP per pixel, located
-    to sub-pixel precision at the peak of that step.
+    The change is measured across `span` pixels either side of each point,
+    not between neighbours: a printed border often fades into the frame over
+    ten pixels or more (a Pokémon back's gold into its blue), and pixel to
+    pixel that change is no bigger than print texture. Over a span it stands
+    out, and a sharp edge still reads as sharp.
+
+    The FIRST qualifying peak wins, not the biggest — artwork deeper in
+    usually has harder edges than the border does. Its position is then
+    refined by `_midpoint`.
     """
     seg = _smooth(profile.astype(float), 3)
-    stop = min(stop, len(seg) - 2)
+    n = len(seg)
+    stop = min(stop, n - span - 1)
     if stop - start < 6:
         return None
-    # Gradient magnitude: distance between neighbours either side.
-    grad = np.linalg.norm(seg[2:] - seg[:-2], axis=1) / 2.0
-    grad = np.concatenate([[0.0], grad, [0.0]])
+    grad = np.zeros(n)
+    grad[span:n - span] = np.linalg.norm(seg[2 * span:] - seg[:-2 * span], axis=1)
     window = grad[start:stop]
     if not len(window) or window.max() < MIN_STEP:
         return None
-    # The first peak that is both above the floor and a decent fraction of the
-    # strongest in the window — so print texture inside the border does not
-    # win, but artwork deeper in does not either.
-    floor = max(MIN_STEP, 0.35 * window.max())
+    floor = max(MIN_STEP, 0.3 * window.max())
     for j in range(1, len(window) - 1):
         g = window[j]
         if g >= floor and g >= window[j - 1] and g >= window[j + 1]:
             i = start + j
-            # Parabolic refinement of the peak.
-            a, b, c = grad[i - 1], grad[i], grad[i + 1]
-            den = a - 2 * b + c
-            off = 0.5 * (a - c) / den if abs(den) > 1e-9 else 0.0
-            return i + max(-0.5, min(0.5, off))
+            return _midpoint(seg, i, span)
     return None
 
 
@@ -294,6 +425,7 @@ def measure(im, card_mm=CARD_MM):
     Returns a Measurement whose coordinates are in a deskewed copy of the card
     with a margin of background around it.
     """
+    im, how = isolate(im)
     _exact, padded, angle = imaging.straighten(im)
     arr = np.asarray(padded.convert("RGB")).astype(float)
     h, w = arr.shape[:2]
@@ -322,7 +454,7 @@ def measure(im, card_mm=CARD_MM):
                 continue
             s0 = int(math.ceil(outer + dim * SEARCH[0])) + 1
             s1 = int(outer + dim * SEARCH[1])
-            inner = _first_step(prof, s0, s1)
+            inner = _first_step(prof, s0, s1, span=max(2, round(dim * 0.006)))
             outers.append(start + outer)
             widths.append(None if inner is None else inner - outer)
 
@@ -355,7 +487,11 @@ def measure(im, card_mm=CARD_MM):
     else:
         notes += [f"{n} border is uncertain — check the line" for n in unsure
                   if sides[n].width]
+    if "not isolated" in how:
+        notes.insert(0, "could not pick the card out of this photo — the lines "
+                        "are likely on the wrong thing")
     m = Measurement(padded, sides, angle, card_mm, notes)
+    m.source = how
     m.recompute()
     return m
 
@@ -500,7 +636,7 @@ def _wrap(text, n):
 
 
 def measure_path(path, card_mm=CARD_MM):
-    return measure(imaging.load(path), card_mm)
+    return measure(load(path), card_mm)
 
 
 def csv_row(label, rep):

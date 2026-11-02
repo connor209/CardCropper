@@ -81,6 +81,28 @@ def check_centering(work):
         if L != R:
             check(m.lr[1] == ("first" if L > R else "second"), "L/R reversed")
 
+    # A photo rather than a scan: the same card on a white table with a slab
+    # label above it, and as a cut-out with semi-transparent slab plastic.
+    # The card has to be picked out (not the label, not the whole photo)
+    # before anything is measured.
+    import numpy as np
+    card = make_bordered((40, 31, 45, 30), 0.0)
+    m0 = centering.measure(card)
+    _, padded, _ = imaging.straighten(card)
+    photo = Image.new("RGB", (padded.size[0] + 200, padded.size[1] + 500), (245, 245, 242))
+    ImageDraw.Draw(photo).rectangle([100, 40, photo.size[0] - 100, 240], fill=(40, 90, 200))
+    photo.paste(padded.crop((22, 22, padded.size[0] - 22, padded.size[1] - 22)), (122, 342))
+    a = np.asarray(photo).copy()
+    a[(a.max(axis=2) < 12)] = (245, 245, 242)          # the bed becomes the table
+    on_table = Image.fromarray(a)
+    for name, img in (("photo", on_table),
+                      ("cut-out", Image.merge("RGBA", (*on_table.split(), Image.fromarray(
+                          np.where(np.asarray(on_table).min(axis=2) > 240, 70, 255)
+                          .astype(np.uint8)))))):
+        m = centering.measure(img)
+        check(abs(m.lr[0] - m0.lr[0]) < 1.0 and abs(m.tb[0] - m0.tb[0]) < 1.0,
+              f"{name}: measured {m.summary()}, the scan reads {m0.summary()}")
+
     # Grades follow the thresholds: a perfectly centred card makes every
     # company's top centering grade, and one at 75/25 makes none of them.
     perfect = grading.best_grades(50, 50, 50, 50)

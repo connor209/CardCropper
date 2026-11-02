@@ -21,7 +21,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from . import centering, imaging
+from . import centering
 
 VIEW_H = 640          # on-screen height of each face
 LOUPE = 64            # source pixels across the loupe
@@ -192,9 +192,9 @@ class CenteringWindow(tk.Toplevel):
                           ("<Shift-Up>", -2), ("<Shift-Down>", 2)):
             self.bind(key, lambda _e, s=step: self._nudge(s))
 
-        self.front.load(imaging.load(front_path))
+        self.front.load(centering.load(front_path))
         if back_path:
-            self.back.load(imaging.load(back_path))
+            self.back.load(centering.load(back_path))
 
     # -------------------------------------------------------------- events
 

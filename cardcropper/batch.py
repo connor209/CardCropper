@@ -215,8 +215,8 @@ def measure_centering(card, out_dir, index):
     Never fatal to the card: the crops are the job, and a card whose border
     could not be found still has perfectly good corners.
     """
-    front = centering.measure(_io(imaging.load, card.front))
-    back = centering.measure(_io(imaging.load, card.back))
+    front = centering.measure(_io(centering.load, card.front))
+    back = centering.measure(_io(centering.load, card.back))
     folder = os.path.join(out_dir, CENTERING_DIR)
     os.makedirs(folder, exist_ok=True)
     centering.sheet(front, back, os.path.join(folder, f"{index:04d}_centering.jpg"),
