@@ -387,6 +387,20 @@ def updater_checks(work):
     check(updater.install(bundle("newer", "pillow\nnumpy\n"), root, expected="newer"),
           "new requirements should be reported so they get installed")
 
+    # The extension folder is replaced with the code, old files and all.
+    os.makedirs(os.path.join(root, "extension"))
+    with open(os.path.join(root, "extension", "stale.js"), "w") as fh:
+        fh.write("old")
+    ext = os.path.join(work, "bundle-ext.zip")
+    with zipfile.ZipFile(ext, "w") as zf:
+        zf.writestr("cardcropper/__init__.py", "NEW")
+        zf.writestr("cardcropper/_version.py", 'COMMIT = "ext"\n')
+        zf.writestr("extension/manifest.json", "{}")
+    updater.install(ext, root, expected="ext")
+    check(sorted(os.listdir(os.path.join(root, "extension"))) == ["manifest.json"],
+          "the extension folder was not replaced")
+    check("extension.old" not in os.listdir(root), "the old extension was left behind")
+
     os.makedirs(os.path.join(root, ".git"))
     check(not updater.can_self_update(root), "a git checkout must never update itself")
 

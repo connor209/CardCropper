@@ -205,6 +205,7 @@ def install(zip_path, root=ROOT, expected=None):
             src = os.path.join(staging, name)
             if os.path.isfile(src):
                 shutil.copyfile(src, os.path.join(root, name))
+        _swap_folder(staging, root, EXTENSION)
         return _read(os.path.join(root, "requirements.txt")) != old_req
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -225,6 +226,30 @@ def _replace(src, dst):
             if attempt == RENAME_TRIES - 1:
                 raise
             time.sleep(RENAME_WAIT)
+
+
+#: The Chrome extension ships in the bundle too. It is swapped like the code
+#: so it stays in step with the change files the app writes; Chrome then needs
+#: its reload button pressed on chrome://extensions to pick the new copy up.
+EXTENSION = "extension"
+
+
+def _swap_folder(staging, root, name):
+    """Replace root/name with staging/name, if the bundle has one."""
+    new = os.path.join(staging, name)
+    if not os.path.isdir(new):
+        return
+    dest, old = os.path.join(root, name), os.path.join(root, name + ".old")
+    shutil.rmtree(old, ignore_errors=True)
+    if os.path.exists(dest):
+        _replace(dest, old)
+    try:
+        _replace(new, dest)
+    except OSError:
+        if os.path.exists(old):
+            _replace(old, dest)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
 
 
 def _read(path):
