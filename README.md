@@ -162,10 +162,12 @@ cannot be downloaded without signing in, so the check fails and stays quiet.
 
 ## Using it
 
-Double-click `CardCropper.bat` (or `CardCropper.exe`). The window has three
-tabs: **Crop cards**, **Scan folders** (the day's empty folders, for scanning a
-stack at a time) and **Split into stacks** (for scanning a long run in one go
-and filing it into those same folders afterwards).
+Double-click `CardCropper.bat` (or `CardCropper.exe`). The window's tabs:
+**Crop cards**, **Scan folders** (the day's empty folders, for scanning a
+stack at a time), **Split into stacks** (for scanning a long run in one go
+and filing it into those same folders afterwards), **Condition a CSV**, and
+the batch workflow after cropping — **Batch & price**, **Grade** and
+**Variants** (see [From cropped folders to CardUploader](#from-cropped-folders-to-carduploader)).
 
 ### Crop cards
 
@@ -505,7 +507,9 @@ purpose: copies of one card that grade differently are different products.
 4. **Write grades to a copy of the CSV** (`--cli apply`). Writes
    `<stem>-conditioned.csv` with the three condition columns set, the grade at
    the end of the title updated, and the flaw note appended to the
-   description. Pokémon NM is listed as LP (house rule); Yu-Gi-Oh NM stays NM.
+   description. Vintage Pokémon (WotC 1999-2003 and EX era 2003-2007) graded
+   NM is listed as LP; modern Pokémon, Yu-Gi-Oh and MTG NM stay NM (house rule,
+   21 Nov 2026).
    Cards that are held, ungraded, or need a condition whose strings are
    unknown go to `<stem>-held.csv` with the reason. The original export is
    never modified.
@@ -514,8 +518,8 @@ purpose: copies of one card that grade differently are different products.
 
 Only the NM condition strings have been seen in a real export. A guessed value
 does not fail loudly — it rejects the batch or lists every card at the wrong
-condition — so nothing else is built in, and until it is filled in **every
-Pokémon card is held** (graded NM lists as LP). To unlock a grade, condition
+condition — so nothing else is built in, and until it is filled in every card
+that lists below NM is held (vintage Pokémon graded NM lists as LP). To unlock a grade, condition
 a card at that grade by hand in CardUploader, export, and copy its
 `*ConditionID`, `C:Card Condition` and `CD:Card Condition - (ID: 40001)` cells
 into `condition-map.json` (**Settings folder** button; `%APPDATA%\CardCropper`
@@ -540,6 +544,158 @@ Opening the export in Excel turns a card number like `4/99` into `Apr-99`. The
 app repairs those where the listing title confirms the original number, and
 lists the ones it cannot. Better not to round-trip the CSV through a
 spreadsheet at all.
+
+## From cropped folders to CardUploader
+
+The batch work that used to be done by hand or with an AI assistant —
+batching, crop checks, grading, variant checks, pricing and the CardUploader
+edits — runs here as rules. AI is only used where a rule cannot decide: the
+optional single-card second opinion on the Grade tab.
+
+### 1. Batches, codes and manifests (Batch & price tab, `--cli batch`)
+
+Point it at the cropped folders, in run order, with the game and language.
+Each folder is cut into batches of 50 and each batch gets the next unused
+CardUploader code:
+
+| Game | Codes | SKUs |
+|---|---|---|
+| Pokémon (EN and JP) | `AA` … `AZ`, `BA` … `ZZ` — `GA` follows `FZ` | `KA1` … `KA50` |
+| Yu-Gi-Oh | `YGO-A` … `YGO-Z`, then `YGO-AA`, `YGO-AB` | `YGO-A1` … `YGO-A50` |
+| MTG | `MTG-A` … as Yu-Gi-Oh | `MTG-I1` … |
+
+The next code is the one after the **highest** code CardUploader already
+holds, empty batches included (batch `IP` exists and is empty; it still
+counts), so a code is never reused. That list comes from CardUploader's batch
+history: save it with the extension's **Save batch history** and pass it as
+`--history`, or set `CARDUPLOADER_TOKEN` and use `--fetch-history`. Without
+one or the other it refuses to pick codes — a reused code puts two cards
+under one SKU.
+
+Each batch writes `manifest-<code>.json` and `.csv` (SKU, game, language, and
+the paths of all four images) into its folder, then `checks-<code>.csv`:
+
+- **Missing images** — every card needs front, back, front crops and back
+  crops. `INCOMPLETE`.
+- **Solid black edge strip** — the crop shows bed where the card's edge
+  should be: a missed edge. That panel is `UNCHECKED` until re-cropped from
+  the full scan, and the Grade tab will not accept NM over it.
+- **Second card in frame, or bed showing inside the card** — `HOLD`.
+- **Triage scores** (local, no AI): whitening points per panel on both faces
+  (`front: corners 0, top 0, R 1, bottom 0, L 0; back: …`) counted only where
+  brighter than the scanner's halo, ignoring the uniform scanner hairline
+  along an edge and the printed dot on MTG backs; and for English Pokémon
+  backs, marks against a reference back built from ~50 LP backs
+  (`--cli reference <backs>`): 50px+ area or 30px+ long is `review`, 150px+ or
+  60px+ long a `dmg-candidate`, and a huge difference usually means the two
+  did not line up — check by eye.
+
+**Scores only triage.** No game may skip a look on a score until it has been
+calibrated on its golden set with zero LP-or-worse cards below the clean
+threshold. Today that is no game, and Yu-Gi-Oh never: every card is opened.
+
+### 2. Grade (Grade tab)
+
+Open a manifest. One card at a time; each of the 16 panels (corners and
+edges, front and back) at native size — zoomed by a whole number, never
+shrunk — with the same panel of a clean and an LP reference card beside it.
+Put the references in `references/<game line>/clean.jpg` and `lp.jpg` (or
+`clean-front.jpg`, `clean-back.jpg`, …) in the settings folder.
+
+Keys: **1-6** or **N L M H D X** for NM / LP / MP / HP / DMG / HOLD, **→ / ←**
+(or Space / Backspace) through the panels. Wear counts are pre-filled from the
+checks. The rules are enforced, not suggested:
+
+- NM needs every panel of both faces opened, none unchecked, and fewer than 3
+  wear points across both faces.
+- Whitened tips on 3 or 4 corners of either face: LP at best.
+- Any crease: never MP — HP if short, from an edge only, ink intact;
+  otherwise DMG.
+- Two passes that disagree: the worse wins (set **Pass** to 2 for a second).
+
+Grades go to `grades-<code>.csv` beside the manifest. **Second opinion
+(Claude)** sends that one card's two crop sheets to the Claude API in one
+call (needs `pip install anthropic` and an `ANTHROPIC_API_KEY`); the answer is
+advice and is never counted as a pass.
+
+Listing rules, applied after grading: vintage Pokémon NM lists as LP, modern
+NM as NM, Yu-Gi-Oh and MTG NM stay NM, and NM priced £15+ goes on the in-hand
+check list before listing. Full rules: `claude/conditioning-guide-v2.md`.
+
+### 3. Golden sets and audits (`--cli golden`, `--cli audit`)
+
+A golden set per game line (`pokemon-en`, `pokemon-jp-vintage`, `yugioh`,
+`mtg`) lives in `golden/<line>.csv` in the settings folder: 30-50 cards graded
+in hand by Connor (`id, card, true_grade, borderline, front, back,
+front_crops, back_crops`).
+
+- **Before a batch:** `--cli golden pokemon-en --pick blind.csv` picks 10, 3+
+  borderline. Grade them blind on the Grade tab (open `blind.csv`), then
+  `--cli golden pokemon-en --score blind-grades-score.csv`. Any overgrade:
+  stop.
+- **After a batch:** `--cli audit --grades grades-KA.csv --pick audit.csv`
+  picks 8 random NM and 3 LP for an in-hand check. Fill in `true_grade` (and
+  root cause, fix, refund for any disagreement), then `--cli audit --record
+  audit.csv --batch KA --game pokemon`. Every disagreement goes to
+  `error-log.csv` (date, SKU, card, game, source, our grade, true grade, root
+  cause, fix, refund).
+- Target: NM overgrade rate under 2% per game. Above it, that game's NM lists
+  as LP until two clean audits in a row; `--cli audit` shows the status.
+
+### 4. Variants (Variants tab, `--cli variants`)
+
+Once CardUploader has matched a batch, save its job data with the extension
+and open it here. Every card whose catalog entry also comes as Reverse
+Holofoil, Cosmos, stamped or 1st Edition is shown, scan beside catalog image:
+**C** correct, **S** switch to the chosen variant, **X** HOLD (a WotC-era
+front with a modern back; a title plainly not the card it was matched to,
+such as a World Championship deck card matched to the set print). Nothing is
+switched from the scans alone — in the 21 Nov 2026 audit, 24 of 69
+scan-based reverse calls were wrong.
+
+### 5. Price and report (Batch & price tab, `--cli price`, `--cli report`)
+
+Prices come from eBay UK sold comps through Comp Finder (`POST
+/api/batch-comps`, title form, 35 cards a call; set `COMP_FINDER_COOKIE` to
+your signed-in Comp Finder session cookie). The house rules are applied here
+so every number can be redone by hand:
+
+- every sale is checked against the card's printing (Cosmos, Reverse,
+  1st Edition, stamped…) on top of Comp Finder's own filter;
+- sale total = price + postage, postage capped at £4.00;
+- the 40th percentile of the totals, the lowest if fewer than 4 sales;
+- up onto the .49/.99 ladder, never below the floor (Pokémon £2.49,
+  Yu-Gi-Oh £1.99);
+- the condition scale; sensibility flags; and the decision: apply, Terapeak
+  (a person checks — **always for a rise on fewer than 4 sales**), keep (no
+  fresh comps), or hold (the lookup failed).
+
+Values the feature notes do not spell out — the condition multipliers, the
+MTG floor, which exclusions are put back, the flag thresholds and how recent
+a register row must be — are Comp Finder's house values or marked
+PROVISIONAL at the top of `cardcropper/pricing.py`. Check them against
+`claude/pricing-standard.md`. The golden pricing tests (Riolu Cosmos BW33
+~£50.49, Riolu BW33 ~£14.99, Numel Peelable Ditto ~£15.99, Lugia 78/124
+~£4.49, Exeggutor 109/108 ~£5.99, Aron 44/100 £2.49, Fearow 36/100 £2.49) run
+with `--cli price-golden`, and must pass after every change to the rules.
+
+Every price is recorded in the price register (`price-register.sqlite` in the
+settings folder); a row is reused only if it came from eBay sold comps and is
+recent. The run writes `pricing-<job>.csv`, `terapeak-<job>.csv` (fill in
+`checked` and `terapeak_price`, then **Report again**) and the run report:
+SKUs priced / total, cards with 10+, 4-9, 1-3 and 0 sales, Terapeak checks,
+recommendations not applied, the Connor list, and cards kept at an old price
+without fresh comps. **A batch is never called READY while anything was
+skipped.**
+
+### 6. Push to CardUploader (`--cli changes`, then the extension)
+
+**Write change file** gathers the condition changes (from the grades, after
+the listing rules), the prices and the variant switches into
+`changes-<job>.json`. Apply it with the Chrome extension in `extension/`: it
+shows the diff, applies only on a click, a few cards a second, stops at the
+first error, waits for eBay sync on listed cards and re-reads to verify. See
+[extension/README.md](extension/README.md).
 
 ## From the command line
 
@@ -603,6 +759,7 @@ or Ubuntu: `sudo apt install python3-tk`.
 
 ```
 python -m tests.smoke
+node extension/test/push.test.js
 ```
 
 One real scan is kept under `tests/fixtures/`, byte for byte, because the

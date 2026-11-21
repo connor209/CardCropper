@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "CardCropper for CardUploader",
+  "version": "0.1.0",
+  "description": "Apply CardCropper change files (price, condition, variant) to your own CardUploader batches, after a diff and a click.",
+  "action": { "default_title": "CardCropper" },
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://carduploader.com/*", "https://www.carduploader.com/*"],
+      "js": ["lib/push.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
