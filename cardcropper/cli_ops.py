@@ -403,6 +403,8 @@ def price_golden_cmd(argv):
                                  description="Run the golden pricing tests through Comp Finder.")
     ap.add_argument("--base", default=pricing.COMP_FINDER)
     ap.add_argument("--evidence", help="saved Comp Finder response instead of calling it")
+    ap.add_argument("--show", action="store_true",
+                    help="print the sales behind every price, not just the failures")
     a = ap.parse_args(argv)
     if a.evidence:
         with open(a.evidence, encoding="utf-8") as fh:
@@ -410,9 +412,16 @@ def price_golden_cmd(argv):
         ev = {r.get("id"): r for r in data.get("results", [])}
     else:
         ev = pricing.batch_comps(pricing.golden_cards(), a.base)
+        # Kept so a failure can be looked into again without another search.
+        saved = os.path.join(settings_dir(), "price-golden-evidence.json")
+        with open(saved, "w", encoding="utf-8") as fh:
+            json.dump({"results": list(ev.values())}, fh, indent=1)
     fails = 0
-    for title, expected, got, ok in pricing.golden_check(ev):
+    for i, (title, expected, p, ok) in enumerate(pricing.golden_priced(ev)):
         fails += not ok
+        got = p.suggested
         print(f"{'ok  ' if ok else 'FAIL'} {title}: expected ~£{expected:.2f}, got "
               + (f"£{got:.2f}" if got is not None else "no price"))
+        if not ok or a.show:
+            print("\n".join(pricing.explain(p, ev.get(f"golden-{i}"))))
     return 1 if fails else 0

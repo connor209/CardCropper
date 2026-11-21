@@ -385,8 +385,8 @@ GOLDEN = (
 GOLDEN_TOLERANCE = 0.25   # ± share of the expected price, for comps that move
 
 
-def golden_check(evidence):
-    """[(title, expected, got, ok)] from batch_comps' answer for GOLDEN."""
+def golden_priced(evidence):
+    """[(title, expected, Priced, ok)] from batch_comps' answer for GOLDEN."""
     out = []
     for i, (title, variant, expected) in enumerate(GOLDEN):
         r = evidence.get(f"golden-{i}") or {}
@@ -394,8 +394,35 @@ def golden_check(evidence):
                        variant_text=variant, status=r.get("status", "ok"))
         got = p.suggested
         ok = got is not None and abs(got - expected) <= expected * GOLDEN_TOLERANCE
-        out.append((title, expected, got, ok))
+        out.append((title, expected, p, ok))
     return out
+
+
+def golden_check(evidence):
+    """[(title, expected, got, ok)] from batch_comps' answer for GOLDEN."""
+    return [(t, e, p.suggested, ok) for t, e, p, ok in golden_priced(evidence)]
+
+
+def explain(p, evidence_row=None):
+    """
+    The working behind one price, for a person to check: every sale kept (date,
+    total, title), and how many were left out and why. No cookie or account
+    detail is in it — only eBay listing titles and prices.
+    """
+    lines = [f"    method {p.method}, {p.n_sales} sale(s) kept, basis "
+             + (f"£{p.basis:.2f}" if p.basis is not None else "none")]
+    if evidence_row:
+        lines.append(f"    Comp Finder searched: {evidence_row.get('query', '?')}  "
+                     f"parsed: {evidence_row.get('parsed', '')}")
+    for s in sorted(p.kept, key=sale_total):
+        lines.append(f"    kept  £{sale_total(s):6.2f}  {s.get('date', '')[:10]}  "
+                     f"{s.get('title', '')}" + ("  (put back)" if s.get("put_back") else ""))
+    why = {}
+    for s in p.excluded:
+        why[s["why"]] = why.get(s["why"], 0) + 1
+    if why:
+        lines.append("    left out: " + ", ".join(f"{n} {w}" for w, n in sorted(why.items())))
+    return lines
 
 
 def golden_cards():
