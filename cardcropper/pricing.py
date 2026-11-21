@@ -89,6 +89,51 @@ def variant_ok(card_printing, sale_title):
     return sale == set(card_printing)
 
 
+#: Words that mean more than one card is in the sale.
+LOT_WORDS = re.compile(
+    r"\b(lots?|job\s*lot|joblot|bundles?|collection|bulk|playsets?|set\s+of|binder)\b"
+    r"|\b([2-9]|\d{2,})\s*x\b|\bx\s*([2-9]|\d{2,})\b", re.I)
+#: A collector number in a title: 36/100, 013/078, TG05/TG30 — or a promo
+#: code such as BW33, SWSH123, SM210, or a Yu-Gi-Oh code such as LOB-EN005.
+_FRACTION = re.compile(r"(?<![\w/])([A-Z]{0,4})0*(\d{1,4})[a-z]?\s*/\s*[A-Z]{0,4}\d{1,4}(?![\w/])", re.I)
+_CODE = re.compile(r"\b([A-Z]{2,5})-?(?:EN|E)?0*(\d{1,4})\b")
+
+
+def card_number(title):
+    """(prefix, number) of the card's own number, or None if it has none."""
+    m = _FRACTION.search(title or "")
+    if m:
+        return m.group(1).upper(), int(m.group(2))
+    m = _CODE.search(title or "")
+    if m:
+        return m.group(1).upper(), int(m.group(2))
+    return None
+
+
+def names_number(sale_title, number):
+    """Whether a sale title carries the card's number (zero-padding ignored)."""
+    prefix, n = number
+    pat = (rf"(?<![\w]){re.escape(prefix)}-?(?:EN|E)?0*{n}(?!\d)" if prefix
+           else rf"(?<![\d]){'0*'}{n}(?!\d)")
+    return re.search(pat, sale_title or "", re.I) is not None
+
+
+def looks_like_lot(card_title, sale_title):
+    """
+    A sale that is more than one card: it says so (lot, bundle, 3x…), or it
+    lists several names — commas, & or + — without the card's own number.
+    Comp Finder misses the second kind: "Fearow, Cacturn, Cradilly" sold for
+    £22.41 and was kept as a Fearow 36/100 comp (21 Nov 2026).
+    """
+    t = sale_title or ""
+    if LOT_WORDS.search(t):
+        return True
+    number = card_number(card_title)
+    if number and names_number(t, number):
+        return False
+    return bool(re.search(r",|\s&\s|\s\+\s|\band\b", t, re.I))
+
+
 # ---------------------------------------------------------------- arithmetic
 
 
@@ -169,6 +214,9 @@ def price_card(sku, title, sold, game="pokemon", condition="NM", current=None,
             continue
         if not variant_ok(printing, s.get("title", "")):
             excluded.append(dict(s, why="variant_mismatch (cardcropper)"))
+            continue
+        if looks_like_lot(title, s.get("title", "")):
+            excluded.append(dict(s, why="bundle (cardcropper)"))
             continue
         kept.append(dict(s, put_back=bool(why)))
     p = Priced(sku, title, game, condition.upper() or "NM", current=current,
@@ -394,6 +442,11 @@ def golden_priced(evidence):
                        variant_text=variant, status=r.get("status", "ok"))
         got = p.suggested
         ok = got is not None and abs(got - expected) <= expected * GOLDEN_TOLERANCE
+        # No sales of the card at all lists at the floor once a person has
+        # checked Terapeak; a golden card expected AT the floor passes then.
+        if got is None and p.n_sales == 0 and p.status not in ("timeout", "error") \
+                and expected == FLOORS["pokemon"]:
+            ok = True
         out.append((title, expected, p, ok))
     return out
 

@@ -421,7 +421,8 @@ def price_golden_cmd(argv):
         fails += not ok
         got = p.suggested
         print(f"{'ok  ' if ok else 'FAIL'} {title}: expected ~£{expected:.2f}, got "
-              + (f"£{got:.2f}" if got is not None else "no price"))
+              + (f"£{got:.2f}" if got is not None else
+                 "no sales — floor after a Terapeak check" if ok else "no price"))
         if not ok or a.show:
             print("\n".join(pricing.explain(p, ev.get(f"golden-{i}"))))
     return 1 if fails else 0

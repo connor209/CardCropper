@@ -282,6 +282,29 @@ def pricing_checks(work):
     p = pricing.price_card("KA7", "Lugia 78/124", [], status="timeout")
     check(p.decision == "hold", "a failed lookup is a hold")
 
+    # Lots: Comp Finder kept "Fearow, Cacturn, Cradilly" (£22.41) as a Fearow
+    # 36/100 comp on 21 Nov 2026 and the price came out £22.49.
+    fearow = "Fearow 36/100 Majestic Dawn Pokemon"
+    lot = [sale(22.41, title="Fearow, Cacturn, Cradilly")]
+    p = pricing.price_card("G7", fearow, lot)
+    check(p.n_sales == 0 and p.excluded[0]["why"] == "bundle (cardcropper)",
+          f"a three-card lot was kept: {p.kept}")
+    for t in ("Fearow 36/100 Majestic Dawn Pokemon Card", "Pokemon Fearow 036/100 MD",
+              "Fearow 36/100, Majestic Dawn, Rare, NM", "FEAROW #36 MAJESTIC DAWN"):
+        check(not pricing.looks_like_lot(fearow, t), f"a single card read as a lot: {t}")
+    for t in ("Fearow, Pidgey & Spearow", "Fearow 36/100 x3", "Pokemon card bundle Fearow",
+              "3x Fearow Majestic Dawn", "Fearow and Pidgeot"):
+        check(pricing.looks_like_lot(fearow, t), f"a lot was kept: {t}")
+    check(not pricing.looks_like_lot("Riolu BW33 Black and White Promos", "Riolu BW33 promo"),
+          "a promo code is a number")
+    check(pricing.looks_like_lot("Riolu BW33 Black and White Promos", "Riolu, Lucario, Zorua"),
+          "a promo list without the code is a lot")
+    check(not pricing.looks_like_lot("Dark Magician LOB-005", "Dark Magician LOB-EN005 1st"),
+          "a Yu-Gi-Oh code is a number")
+    res = {t: (got, ok) for t, _, got, ok in
+           pricing.golden_check({"golden-6": {"status": "ok", "sold": lot}})}
+    check(res[fearow] == (None, True), f"no sales of a floor card is the floor: {res[fearow]}")
+
     # Comp Finder client: 35 a call, one after another.
     calls = []
 
