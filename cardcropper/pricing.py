@@ -285,7 +285,7 @@ def batch_comps(cards, base=COMP_FINDER, cookie=None, fresh=False, per_call=PER_
     {id: result}. `post(url, body)` replaces the HTTP call in tests.
     """
     cookie = cookie or comp_finder_cookie()
-    if not cookie:
+    if not cookie and post is None:
         raise CompFinderError(
             f"no Comp Finder login — paste your session cookie into {cookie_path()} "
             "(or set COMP_FINDER_COOKIE)")
