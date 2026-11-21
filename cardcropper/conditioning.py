@@ -32,7 +32,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from . import carduploader as cu
-from . import imaging, scoring
+from . import grading, imaging, scoring
 
 TRIAGE_FIELDS = ["sku", "title", "set", "number", "triage", "worst_corner_pct",
                  "wear_total_pct", "corner_tl", "corner_tr", "corner_bl", "corner_br",
@@ -49,10 +49,10 @@ BANDS = ("likely-worse", "review", "likely-nm", "no-scan", "error")
 GRADES = scoring.GRADES
 HOLD = "HOLD"
 
-#: Pokémon cards graded NM are LISTED as LP. That is a house rule applied at
-#: listing time; the grade itself stays honest in the review sheet. Yu-Gi-Oh
-#: NM stays NM.
-LIST_AS = {"pokemon": {"NM": "LP"}, "yugioh": {}}
+#: Vintage Pokémon — WotC (1999-2003) and EX era (2003-2007) — graded NM is
+#: LISTED as LP. Modern Pokémon, Yu-Gi-Oh and MTG NM stay NM (house rule,
+#: 21 Nov 2026; it replaces "every Pokémon NM lists as LP"). The grade itself
+#: stays honest in the review sheet. See grading.listing_grade.
 
 #: Any crease makes a card HP at best (house decision, 15 Oct 2026, adopting
 #: the 9 Oct crease definition over the guide's "a single light crease: MP").
@@ -612,7 +612,10 @@ def apply_grades(csv_path, review_path, out_dir=None, condition_map_path=None):
             hold(f"graded {grade} but the notes mention a crease — any crease is "
                  f"{CREASE_FLOOR} or worse; regrade, or reword if there is no crease")
             continue
-        listed = LIST_AS[cu.game(out, row)].get(grade, grade)
+        listed = grading.listing_grade(
+            grade, cu.game(out, row),
+            vintage=cu.is_vintage(out, row) or grading.is_vintage(
+                "pokemon", set_name=out.get(row, cu.SET)))
         if listed not in conditions:
             missing.add(listed)
             why = f"graded {grade}, listed as {listed}" if listed != grade else f"graded {grade}"

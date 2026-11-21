@@ -234,7 +234,8 @@ def _run(work):
     check({r["sku"]: r["triage"] for r in again.records}["26.10.15-001-001"]
           == "likely-worse", "the hosted photos were mistaken for scans")
 
-    # ---- apply: only NM strings are known, so Pokémon (NM lists as LP) holds
+    # ---- apply: only NM strings are known. Modern Pokémon NM lists as NM;
+    # only vintage NM lists as LP (house rule, 21 Nov 2026).
     grades = {"26.10.15-001-001": ("MP", "Whitening on all four back corners.", "yes"),
               "26.10.15-001-002": ("NM", "", "yes"),
               "26.10.15-001-003": ("NM", "", "yes"),
@@ -254,16 +255,17 @@ def _run(work):
     cmap = os.path.join(work, "condition-map.json")
     cu.ensure_condition_map(cmap)
     applied = conditioning.apply_grades(export, res.review_path, out, cmap)
-    check(applied.written == 1, f"only the Yu-Gi-Oh NM is writable, got {applied.written}")
-    check(set(applied.missing_grades) == {"LP", "MP"}, applied.missing_grades)
+    check(applied.written == 3, f"only the NM cards are writable, got {applied.written}")
+    check(set(applied.missing_grades) == {"MP"}, applied.missing_grades)
     written = read_csv(applied.out_path)
-    check([r["CustomLabel"] for r in written] == ["YGO-A1"], "wrong rows written")
-    check(written[0]["*ConditionID"] == "4000", "Yu-Gi-Oh NM must stay NM")
+    check([r["CustomLabel"] for r in written] == ["26.10.15-001-002", "26.10.15-001-003",
+                                                  "YGO-A1"], "wrong rows written")
+    check(all(r["*ConditionID"] == "4000" for r in written),
+          "modern Pokémon and Yu-Gi-Oh NM must stay NM")
     held = {r["CustomLabel"]: r["hold_reason"] for r in read_csv(applied.held_path)}
     check("vintage front" in held["26.10.15-001-004"], "hold reason lost")
     check("rescan" in held["26.10.15-001-006"], "an unreadable scan should hold for a rescan")
     check("not graded" in held["26.10.15-001-005"], "an ungraded card was not held")
-    check("listed as LP" in held["26.10.15-001-002"], "NM->LP house rule not applied")
 
     # ...and once the strings have been harvested from a real export, they are.
     with open(cmap, encoding="utf-8") as fh:
@@ -282,12 +284,12 @@ def _run(work):
           f"MP not written: {pika['*Title']}")
     check(pika["*Description"] == desc + "<br>Whitening on all four back corners.",
           "flaw note should be appended to the boilerplate, not replace it")
-    check(written["26.10.15-001-002"]["*Title"].endswith(" LP"), "NM Pokémon not listed LP")
+    check(written["26.10.15-001-002"]["*Title"].endswith(" NM"), "modern NM Pokémon not listed NM")
     check("26.10.15-001-004" not in written, "a HOLD was written")
     check(written["26.10.15-001-001"]["*Action(SiteID=UK|Country=GB|Currency=GBP|"
                                       "Version=1193)"] == "Add",
           "an untouched column did not survive")
-    check(any(g == "LP" and len(s) == 2 for _, g, s in applied.price_groups),
+    check(any(g == "NM" and len(s) == 2 for _, g, s in applied.price_groups),
           "same title + same grade should price once")
 
     # Any crease is HP at best: an MP with a crease in its notes is held.

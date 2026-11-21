@@ -1410,11 +1410,16 @@ def main():
 
         import cardcropper.gui                   # noqa: F401  (tkinter present?)
         import cardcropper.stacks_tab            # noqa: F401
+        import cardcropper.grade_tab             # noqa: F401
+        import cardcropper.variant_tab           # noqa: F401
+        import cardcropper.ops_tab               # noqa: F401
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
     from tests import conditioning_smoke
     conditioning_smoke.main()
+    from tests import features_smoke
+    features_smoke.main()
 
     print("smoke: ok")
     return 0

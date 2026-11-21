@@ -9,6 +9,9 @@ command line than from a window that has to stay open.
     cardcropper --cli condition <export.csv> --out DIR   triage a CardUploader batch
     cardcropper --cli calibrate --review R --triage T    learn from graded cards
     cardcropper --cli apply <export.csv> --review R      write grades to a copy
+
+and the batch workflow after cropping (see cli_ops): batch, reference,
+variants, price, report, changes, golden, audit, price-golden.
 """
 
 import argparse
@@ -26,6 +29,9 @@ def main():
     if argv and argv[0] in COMMANDS and not os.path.exists(argv[0]):
         return {"condition": condition, "calibrate": calibrate,
                 "apply": apply}[argv[0]](argv[1:])
+    from . import cli_ops
+    if argv and argv[0] in cli_ops.COMMANDS and not os.path.exists(argv[0]):
+        return cli_ops.main(argv[0], argv[1:])
     return crop()
 
 
