@@ -872,4 +872,21 @@ def main():
                        for t in (crop.worker, crop.planner, split.worker, split.planner,
                                  condition.worker, ops.worker, grade.worker))
     root.after(1500, lambda: updater.offer(root, is_busy=busy))
+
+    # Which build this is, and a check that always answers — the one on start
+    # stays quiet when it cannot check, which looks the same as up to date.
+    bar = ttk.Frame(root, padding=(10, 2, 10, 6))
+    bar.grid(row=1, column=0, sticky="ew")
+    mine = updater.current()
+    ttk.Label(bar, foreground="#666",
+              text=f"Build {mine[:7]}" if mine else "Build: not stamped (cannot self-update)")\
+        .pack(side="left")
+    check_btn = ttk.Button(bar, text="Check for updates")
+
+    def check_updates():
+        check_btn.configure(state="disabled", text="Checking…")
+        updater.check_now(root, is_busy=busy, done=lambda: check_btn.configure(
+            state="normal", text="Check for updates"))
+    check_btn.configure(command=check_updates)
+    check_btn.pack(side="right")
     root.mainloop()

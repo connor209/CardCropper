@@ -16,8 +16,10 @@ A copy that was not built by CI — a git checkout, someone running from source
 — has no `_version.py` and never updates: overwriting a working tree with a
 release would throw away whatever is being worked on in it.
 
-Everything here fails quietly. No network, a private repository, GitHub
+The check on start fails quietly. No network, a private repository, GitHub
 having a bad day: the app opens as it would have, and asks again next time.
+The Check for updates button (`check_now`) is the opposite: it always says
+what it found, so "up to date" and "could not check" never look the same.
 """
 
 import os
@@ -97,6 +99,69 @@ def check():
     return commit, summary
 
 
+def status(root=ROOT):
+    """
+    What a check finds, said out loud — for the Check for updates button, where
+    "nothing to report" must not look the same as "could not check".
+
+    Returns a dict: `kind` is one of
+      "newer"     a different build is published (`commit`, `summary`)
+      "current"   this copy is the published build
+      "no-stamp"  not built by CI (a git checkout, a GitHub "Download ZIP",
+                  a copy built by hand), so it cannot tell which build it is
+      "offline"   the published version could not be read (`error`)
+    plus `mine` (this build's commit or None), `can_self_update` and `git`.
+    """
+    mine = current()
+    out = {"mine": mine, "can_self_update": can_self_update(root),
+           "git": os.path.exists(os.path.join(root, ".git")),
+           "commit": None, "summary": "", "error": ""}
+    try:
+        commit, summary = parse_version(_get(VERSION_URL).decode("utf-8", "replace"))
+    except Exception as exc:                            # noqa: BLE001
+        out.update(kind="offline", error=f"{type(exc).__name__}: {exc}")
+        return out
+    out.update(commit=commit, summary=summary)
+    if not commit:
+        out.update(kind="offline", error="the published version file is empty")
+    elif not mine:
+        out["kind"] = "no-stamp"
+    elif commit == mine:
+        out["kind"] = "current"
+    else:
+        out["kind"] = "newer"
+    return out
+
+
+def describe(st):
+    """A plain-English report of `status()` for a message box."""
+    short = lambda c: (c or "")[:7]                     # noqa: E731
+    if st["kind"] == "current":
+        return f"CardCropper is up to date (build {short(st['mine'])})."
+    if st["kind"] == "newer":
+        return (f"A new version is available: build {short(st['commit'])}"
+                + (f" — “{st['summary']}”" if st["summary"] else "")
+                + f". You have build {short(st['mine'])}.")
+    if st["kind"] == "offline":
+        return ("Could not reach GitHub to check for updates, so it is not known "
+                f"whether this copy is current.\n\n{st['error']}\n\nCheck the internet "
+                "connection, or whether antivirus or a firewall blocks Python "
+                f"from reaching github.com. The latest build is always at\n{RELEASES}")
+    if st["git"]:
+        return ("This copy is a git checkout, so it never updates itself — that "
+                f"would overwrite the working tree. The latest build is "
+                f"{short(st['commit'])}; pull main to get it.")
+    why = (
+           "it has no build stamp (cardcropper\\_version.py) — it was not "
+           "downloaded from the Releases page, e.g. it came from GitHub's "
+           "“Download ZIP” button or was built by hand")
+    return (f"This copy cannot update itself: {why}.\n\nThe latest build is "
+            f"{short(st['commit'])}"
+            + (f" — “{st['summary']}”" if st["summary"] else "")
+            + f".\n\nDownload CardCropper-python.zip from\n{RELEASES}\n"
+            "and unzip it over this folder. That copy will offer updates by itself.")
+
+
 def install(zip_path, root=ROOT, expected=None):
     """
     Put the bundle at `zip_path` in place of the one at `root`.
@@ -129,11 +194,11 @@ def install(zip_path, root=ROOT, expected=None):
         old_req = _read(os.path.join(root, "requirements.txt"))
         pkg, old = os.path.join(root, "cardcropper"), os.path.join(root, "cardcropper.old")
         shutil.rmtree(old, ignore_errors=True)      # left by a previous update
-        os.replace(pkg, old)
+        _replace(pkg, old)
         try:
-            os.replace(new_pkg, pkg)
+            _replace(new_pkg, pkg)
         except OSError:
-            os.replace(old, pkg)                    # put the working copy back
+            _replace(old, pkg)                      # put the working copy back
             raise
         shutil.rmtree(old, ignore_errors=True)
         for name in BUNDLE_FILES:
@@ -143,6 +208,23 @@ def install(zip_path, root=ROOT, expected=None):
         return _read(os.path.join(root, "requirements.txt")) != old_req
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+#: A folder inside Google Drive for Desktop or OneDrive can refuse a rename for
+#: a moment while the sync client has a file in it open — on Windows as
+#: PermissionError or [Errno 22]. A second try a moment later usually works.
+RENAME_TRIES, RENAME_WAIT = 5, 1.0
+
+
+def _replace(src, dst):
+    import time
+    for attempt in range(RENAME_TRIES):
+        try:
+            return os.replace(src, dst)
+        except OSError:
+            if attempt == RENAME_TRIES - 1:
+                raise
+            time.sleep(RENAME_WAIT)
 
 
 def _read(path):
@@ -215,32 +297,74 @@ def offer(root_window, is_busy=lambda: False):
         result = found.get("result")
         if not result or is_busy():
             return
-        commit, summary = result
-        what = f"\n\n“{summary}”" if summary else ""
-        if not can_self_update():
-            if messagebox.askyesno(
-                    "CardCropper",
-                    f"A new version of CardCropper is available.{what}\n\n"
-                    "Open the download page?"):
+        _ask_and_install(root_window, *result)
+
+    root_window.after(300, wait)
+
+
+def check_now(root_window, is_busy=lambda: False, done=None):
+    """
+    The Check for updates button: check, and ALWAYS say what was found — up
+    to date, a new build, no build stamp, or GitHub unreachable.
+    """
+    import threading
+    from tkinter import messagebox
+
+    found = {}
+    worker = threading.Thread(target=lambda: found.update(st=status()), daemon=True)
+    worker.start()
+
+    def wait():
+        if worker.is_alive():
+            root_window.after(200, wait)
+            return
+        if done:
+            done()
+        st = found["st"]
+        if st["kind"] != "newer":
+            show = messagebox.showinfo if st["kind"] == "current" else messagebox.showwarning
+            show("CardCropper", describe(st))
+            if st["kind"] == "no-stamp" and messagebox.askyesno(
+                    "CardCropper", "Open the download page?"):
                 import webbrowser
                 webbrowser.open(RELEASES)
             return
-        if not messagebox.askyesno(
+        if is_busy():
+            messagebox.showinfo("CardCropper", describe(st) + "\n\nSomething is running — "
+                                "it will be offered again when the app next starts.")
+            return
+        _ask_and_install(root_window, st["commit"], st["summary"])
+
+    root_window.after(200, wait)
+
+
+def _ask_and_install(root_window, commit, summary):
+    """Ask, and on yes install and restart (or open the download page)."""
+    from tkinter import messagebox
+
+    what = f"\n\n“{summary}”" if summary else ""
+    if not can_self_update():
+        if messagebox.askyesno(
                 "CardCropper",
                 f"A new version of CardCropper is available.{what}\n\n"
-                "Update now? CardCropper will restart."):
-            return
-        root_window.configure(cursor="watch")
-        root_window.update()
-        try:
-            download_and_install(commit)
-        except Exception as exc:                        # noqa: BLE001
-            root_window.configure(cursor="")
-            messagebox.showerror("CardCropper",
-                                 f"The update did not install, so nothing has "
-                                 f"changed.\n\n{exc}")
-            return
-        restart()
-        root_window.destroy()
-
-    root_window.after(300, wait)
+                "Open the download page?"):
+            import webbrowser
+            webbrowser.open(RELEASES)
+        return
+    if not messagebox.askyesno(
+            "CardCropper",
+            f"A new version of CardCropper is available.{what}\n\n"
+            "Update now? CardCropper will restart."):
+        return
+    root_window.configure(cursor="watch")
+    root_window.update()
+    try:
+        download_and_install(commit)
+    except Exception as exc:                        # noqa: BLE001
+        root_window.configure(cursor="")
+        messagebox.showerror("CardCropper",
+                             f"The update did not install, so nothing has "
+                             f"changed.\n\n{exc}")
+        return
+    restart()
+    root_window.destroy()

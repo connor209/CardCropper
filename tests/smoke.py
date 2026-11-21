@@ -305,6 +305,49 @@ def updater_checks(work):
     finally:
         updater.current = real_current
 
+    # The Check for updates button says which case it is in, every time —
+    # "could not check" must never read as "up to date".
+    real_get = updater._get
+    try:
+        updater.current = lambda: "aaa1111"
+        updater._get = lambda url: b"aaa1111\nSame build\n"
+        check(updater.status()["kind"] == "current", "same build not called current")
+        updater._get = lambda url: b"bbb2222\nNewer build\n"
+        st = updater.status()
+        check(st["kind"] == "newer" and "bbb2222" in updater.describe(st), st)
+
+        def offline(url):
+            raise OSError("no route to host")
+        updater._get = offline
+        st = updater.status()
+        check(st["kind"] == "offline" and "no route to host" in updater.describe(st),
+              f"an unreachable GitHub must be said out loud: {st}")
+        updater.current = lambda: None
+        updater._get = lambda url: b"bbb2222\nNewer build\n"
+        st = updater.status(os.path.join(work, "no-such-root"))
+        check(st["kind"] == "no-stamp" and "build stamp" in updater.describe(st), st)
+    finally:
+        updater.current, updater._get = real_current, real_get
+
+    # A cloud-synced folder can refuse a rename for a moment; it is retried.
+    calls = []
+    real_replace, real_wait = os.replace, updater.RENAME_WAIT
+
+    def flaky(src, dst):
+        calls.append(src)
+        if len(calls) < 3:
+            raise PermissionError("in use by the sync client")
+        return real_replace(src, dst)
+    a, b = os.path.join(work, "rn-a"), os.path.join(work, "rn-b")
+    os.makedirs(a)
+    updater.RENAME_WAIT = 0
+    os.replace = flaky
+    try:
+        updater._replace(a, b)
+    finally:
+        os.replace, updater.RENAME_WAIT = real_replace, real_wait
+    check(os.path.isdir(b) and len(calls) == 3, "a refused rename was not retried")
+
     root = os.path.join(work, "installed")
     os.makedirs(os.path.join(root, "cardcropper"))
     for name, text in (("cardcropper/__init__.py", "OLD"),
