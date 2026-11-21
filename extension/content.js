@@ -256,7 +256,19 @@
       const bad = P.verify(plan.items.slice(0, sent), job);
       if (!bad.length) log(`verified: all ${sent} card(s) read back as sent`, "ok");
       for (const b of bad) log(`MISMATCH ${b.sku} ${b.field}: sent "${b.sent}", now "${b.now}"`, "warn");
+      if (sent) offerReload();
     } catch (e) { log(`could not re-read: ${e.message}`, "warn"); }
+  }
+
+  // The page loaded the batch before these edits and does not know about
+  // them: it still shows the old values until it is reloaded, and editing a
+  // card from that stale view is how a correct price gets typed over.
+  function offerReload() {
+    log("This page still shows the OLD values — reload it before editing anything here.", "warn");
+    const b = document.createElement("button");
+    b.textContent = "Reload page";
+    b.onclick = () => location.reload();
+    $("log").appendChild(b);
   }
 
   async function waitForSync(ids) {

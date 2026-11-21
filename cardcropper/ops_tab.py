@@ -5,7 +5,7 @@ The "Batch & price" tab: the command-line batch workflow behind buttons.
    codes, manifests and crop checks out (`--cli batch`).
 2. Price — a CardUploader job's data (saved by the extension) priced from
    Comp Finder's sold comps under the house rules, with the run report
-   (`--cli price`). Needs COMP_FINDER_COOKIE (the Comp Finder session cookie).
+   (`--cli price`). Needs the Comp Finder session cookie — see pricing.comp_finder_cookie.
 3. Write change file — conditions from the grades, prices, and variant
    switches, for the extension to apply (`--cli changes`).
 
@@ -98,13 +98,35 @@ class OpsTab(ttk.Frame):
         ttk.Button(act, text="Report again", command=self.report).pack(side="left")
         ttk.Button(act, text="Write change file", command=self.changes).pack(side="left", padx=8)
 
-        ttk.Label(self, foreground="#666",
-                  text="Comp Finder needs COMP_FINDER_COOKIE set to your signed-in session "
-                       "cookie. Terapeak checks go in terapeak-<job>.csv beside the job; "
-                       "then Report again.").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        note = ttk.Frame(self)
+        note.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(note, foreground="#666",
+                  text="Comp Finder login: paste your session cookie into the file Comp Finder "
+                       "login opens, save it, then Test. Terapeak checks go in "
+                       "terapeak-<job>.csv beside the job; then Report again.",
+                  wraplength=700, justify="left").pack(side="left")
+        ttk.Button(note, text="Test (golden prices)",
+                   command=lambda: self._run("price-golden", [])).pack(side="right")
+        ttk.Button(note, text="Comp Finder login", command=self.open_cookie)\
+            .pack(side="right", padx=4)
         self.log = tk.Text(self, height=18, wrap="word")
         self.log.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
         self._poll()
+
+    def open_cookie(self):
+        """Open the cookie file in the default editor, making it first."""
+        from . import pricing
+        from .gui import _reveal
+        path = pricing.cookie_path()
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("")
+        if os.name == "nt":
+            os.startfile(path)                                 # noqa: S606
+        else:
+            _reveal(path)
+        self.log.insert("end", f"\nPaste the cookie into {path}, save, then Test.\n")
 
     def pick_folder(self):
         d = filedialog.askdirectory(title="A cropped folder")

@@ -249,6 +249,34 @@ class CompFinderError(RuntimeError):
     pass
 
 
+COOKIE_FILE = "comp-finder-cookie.txt"
+
+
+def cookie_path():
+    from . import conditioning
+    return os.path.join(conditioning.settings_dir(), COOKIE_FILE)
+
+
+def comp_finder_cookie():
+    """
+    The Comp Finder session cookie: $COMP_FINDER_COOKIE, else the file in the
+    settings folder. A file because the cookie is usually longer than Windows'
+    `setx` will store (1024 characters) — and setx cuts it off silently. A
+    pasted "cookie: …" header line is accepted as it is.
+
+    The file wins over the variable: a variable set with setx may hold a
+    cookie that was cut short.
+    """
+    try:
+        with open(cookie_path(), encoding="utf-8-sig") as fh:
+            text = " ".join(fh.read().split())
+    except OSError:
+        text = ""
+    if text.lower().startswith("cookie:"):
+        text = text[7:].strip()
+    return text or os.environ.get("COMP_FINDER_COOKIE", "").strip()
+
+
 def batch_comps(cards, base=COMP_FINDER, cookie=None, fresh=False, per_call=PER_CALL,
                 timeout=300, post=None, progress=None):
     """
@@ -256,7 +284,11 @@ def batch_comps(cards, base=COMP_FINDER, cookie=None, fresh=False, per_call=PER_
     one call after another (they share SoldComps' rate limit). Returns
     {id: result}. `post(url, body)` replaces the HTTP call in tests.
     """
-    cookie = cookie or os.environ.get("COMP_FINDER_COOKIE", "")
+    cookie = cookie or comp_finder_cookie()
+    if not cookie:
+        raise CompFinderError(
+            f"no Comp Finder login — paste your session cookie into {cookie_path()} "
+            "(or set COMP_FINDER_COOKIE)")
 
     def http(url, body):
         req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),

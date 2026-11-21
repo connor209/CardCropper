@@ -656,8 +656,13 @@ scan-based reverse calls were wrong.
 ### 5. Price and report (Batch & price tab, `--cli price`, `--cli report`)
 
 Prices come from eBay UK sold comps through Comp Finder (`POST
-/api/batch-comps`, title form, 35 cards a call; set `COMP_FINDER_COOKIE` to
-your signed-in Comp Finder session cookie). The house rules are applied here
+/api/batch-comps`, title form, 35 cards a call). It signs in with your Comp
+Finder session cookie: **Comp Finder login** on the Batch & price tab opens
+`comp-finder-cookie.txt` in the settings folder to paste it into (Windows'
+`setx` cuts long values off at 1024 characters; `COMP_FINDER_COOKIE` still
+works where it fits), and **Test** runs the golden prices. To copy the
+cookie: open Comp Finder signed in, F12 → Network, reload, click any request
+to the site and copy the `cookie` request header's value. The house rules are applied here
 so every number can be redone by hand:
 
 - every sale is checked against the card's printing (Cosmos, Reverse,
