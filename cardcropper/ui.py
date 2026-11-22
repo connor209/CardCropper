@@ -586,7 +586,17 @@ def tree(parent, columns, height=10, selectmode="browse", stripes=True):
     tv.grid(row=0, column=0, sticky="nsew")
     sb = ttk.Scrollbar(wrap, orient="vertical", command=tv.yview)
     sb.grid(row=0, column=1, sticky="ns")
-    tv.configure(yscrollcommand=sb.set)
+    # A sideways scrollbar too, shown only when the columns are wider than
+    # the table — on a narrow window a column is never cut off unreachably.
+    xb = ttk.Scrollbar(wrap, orient="horizontal", command=tv.xview)
+
+    def xset(first, last):
+        xb.set(first, last)
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            xb.grid_remove()
+        else:
+            xb.grid(row=1, column=0, sticky="ew")
+    tv.configure(yscrollcommand=sb.set, xscrollcommand=xset)
     if stripes:
         tv.tag_configure("odd", background="#f8f9fb")
     return wrap, tv

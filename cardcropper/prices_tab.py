@@ -188,10 +188,12 @@ class PricesTab(ttk.Frame):
         cards_page.columnconfigure(0, weight=1)
         cards_page.rowconfigure(0, weight=1)
         wrap, self.cards = ui.tree(cards_page, (
-            ("title", "Card", 220, {"stretch": True}), ("price", "Price", 64, {"anchor": "e"}),
-            ("expected", "Expected", 64, {"anchor": "e"}), ("sales", "Kept", 40,
+            ("title", "Card", 150, {"stretch": True}), ("price", "Price", 58, {"anchor": "e"}),
+            ("expected", "Expected", 62, {"anchor": "e"}), ("sales", "Kept", 38,
                                                             {"anchor": "e"}),
-            ("decision", "Decision", 110)), height=12)
+            ("decision", "Decision", 64)), height=12)
+        # Expected only means something on the golden test; it is shown then.
+        self.cards.configure(displaycolumns=("title", "price", "sales", "decision"))
         wrap.grid(row=0, column=0, sticky="nsew")
         self.cards.tag_configure("fail", foreground=ui.C["bad"])
         self.cards.bind("<<TreeviewSelect>>", lambda _e: self._picked_card())
@@ -416,8 +418,13 @@ class PricesTab(ttk.Frame):
 
         detail = ttk.Frame(lower, padding=(10, 0, 0, 0), width=300)
         detail.columnconfigure(0, weight=1)
-        ttk.Label(detail, text="Listing", style="Heading.TLabel").grid(row=0, column=0,
-                                                                       sticky="w")
+        head2 = ttk.Frame(detail)
+        head2.grid(row=0, column=0, sticky="ew")
+        ttk.Label(head2, text="Listing", style="Heading.TLabel").pack(side="left")
+        copy = ttk.Button(head2, text="Copy title", style="Ghost.TButton",
+                          command=lambda: self._copy_sale_title())
+        copy.pack(side="right")
+        ui.tip(copy, "Copy the listing title — handy for searching the same wording.")
         self.pic = tk.Canvas(detail, width=260, height=160, background=ui.C["sunken"],
                              highlightthickness=0, cursor="hand2")
         self.pic.bind("<Button-1>", lambda _e: self.open_listing())
@@ -444,10 +451,6 @@ class PricesTab(ttk.Frame):
                                 "counted sale, or count one that was left out when you can "
                                 "see it is the same card — the price is worked again. "
                                 "Nothing on a listing changes.")
-        copy = ttk.Button(btns, text="Copy", style="Ghost.TButton",
-                          command=lambda: self._copy_sale_title())
-        copy.pack(side="left", padx=(6, 0))
-        ui.tip(copy, "Copy the listing title — handy for searching the same wording.")
         lower.add(detail, weight=1)
 
         work = ttk.Frame(right)
@@ -842,6 +845,9 @@ class PricesTab(ttk.Frame):
 
     def _fill(self, priced, expected, evidence, variants=None, keep_tab=False):
         self.priced, self.expected, self.evidence = priced, expected, evidence
+        self.cards.configure(displaycolumns=(
+            ("title", "price", "expected", "sales", "decision") if expected
+            else ("title", "price", "sales", "decision")))
         self.variant_text = variants or {}
         self.left_out = {}
         self.counted = {}
