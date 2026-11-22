@@ -319,7 +319,7 @@ def _natural(s):
 # ---------------------------------------------------------------- prices
 
 
-def price_for(card, get=None):
+def price_for(card, get=None, printing=()):
     """
     Cardmarket's prices for a catalogue card (catalog.CatalogCard), or None
     when there is no guide or no match. A dict: product, created, sure,
@@ -329,6 +329,18 @@ def price_for(card, get=None):
     if card.game not in GAMES:
         return None
     idx = _index(card.game)
+    if card.game == "pokemon":
+        # TCGdex knows each print's Cardmarket id — Japanese cards always,
+        # English ones increasingly. Where it does, no matching is needed.
+        from . import catalog
+        try:
+            variants = catalog.tcgdex_variants(card, get)
+        except Exception:                                   # noqa: BLE001
+            variants = getattr(card, "variants", None) or []
+        if variants:
+            found = _by_variant(card, idx, variants, printing)
+            if found:
+                return found
     if getattr(card, "ids", None):
         return _exact(card, idx)
     if idx is None:
@@ -369,6 +381,47 @@ def price_for(card, get=None):
             "created": idx.created, "sure": found["sure"], "score": found["score"],
             "approx": approx, "prices": prices, "variant": variant,
             "url": SEARCH[card.game] + urllib.parse.quote(card.name)}
+
+
+def _by_variant(card, idx, variants, printing=()):
+    """
+    Price the print the title describes, by its own Cardmarket id, from
+    today's guide (or TCGdex's day-old copy where today's lacks it). The
+    other prints are listed after it, so a 1st Edition or a stamp is never
+    mistaken for the ordinary card or the other way round.
+    """
+    from . import catalog
+    chosen, others = catalog.choose_variant(variants, printing)
+    if not chosen:
+        return None
+    g = (idx.guide.get(chosen["cardmarket"]) if idx else None) or {}
+    var_key, var_name = VARIANT[card.game]
+    if g:
+        prices = [(label, g.get(k)) for k, label in FIELDS if g.get(k)]
+        # The guide's reverse-holo columns hold figures even for cards printed
+        # with no reverse holo (Base Set Pikachu has one), so they are shown
+        # only when TCGdex says a reverse print exists.
+        has_reverse = any(v.get("type") == "reverse" for v in variants)
+        variant = [(f"{var_name.capitalize()} {label.lower()}", g.get(f"{k}-{var_key}"))
+                   for k, label in FIELDS[:1] if g.get(f"{k}-{var_key}") and has_reverse]
+        created = idx.created
+    elif chosen.get("tcgdex_trend"):
+        prices = [("Trend", chosen["tcgdex_trend"])]
+        variant = []
+        created = f"{chosen.get('tcgdex_updated', '')} via TCGdex"
+    else:
+        return None
+    for v in others[:3]:
+        t = ((idx.guide.get(v["cardmarket"]) if idx else None) or {}).get("trend") \
+            or v.get("tcgdex_trend")
+        if t:
+            variant.append((f"{catalog.variant_label(v)} trend", t))
+    return {"product": (idx.product_name.get(chosen["cardmarket"]) if idx else "") or card.name,
+            "id": chosen["cardmarket"], "created": created, "sure": True, "score": 1.0,
+            "approx": False, "exact": True, "print": catalog.variant_label(chosen),
+            "prices": prices, "variant": variant,
+            "url": SEARCH[card.game] + urllib.parse.quote(
+                re.sub(r"\s*\(.*?\)", "", card.name))}
 
 
 def _exact(card, idx):
@@ -422,12 +475,16 @@ def describe(found):
                 "which rarity is which; check on Cardmarket"
                 + ("   [set match unsure]" if not found["sure"] else ""))
     bits = [f"{label} €{v:.2f}" for label, v in found["prices"][:3]]
-    bits += [f"{label} €{v:.2f}" for label, v in found["variant"][:1]]
+    bits += [f"{label} €{v:.2f}" for label, v in
+             found["variant"][:4 if found.get("exact") else 1]]
     when = (found.get("created") or "")[:10]
     caveat = []
     if not found["sure"]:
         caveat.append("set match unsure")
     if found["approx"]:
         caveat.append("one of several same-named cards — check")
-    return (f"Cardmarket{f' ({when})' if when else ''}: " + " · ".join(bits)
+    what = f" — {found['print']}" if found.get("print") and found["print"] != "Normal" \
+        else ""
+    exact = ", exact" if found.get("exact") else ""
+    return (f"Cardmarket{f' ({when}{exact})' if when else ''}{what}: " + " · ".join(bits)
             + (f"   [{'; '.join(caveat)}]" if caveat else ""))

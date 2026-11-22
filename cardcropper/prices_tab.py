@@ -1388,7 +1388,8 @@ class PricesTab(ttk.Frame):
                 if res:
                     c = res[0]
                     try:
-                        cm = cardmarket.describe(cardmarket.price_for(c))
+                        cm = cardmarket.describe(cardmarket.price_for(
+                            c, printing=pricing.printing_of(title)))
                     except Exception:                         # noqa: BLE001
                         cm = ""
                     if cm:

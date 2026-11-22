@@ -548,10 +548,12 @@ class LookupTab(ttk.Frame):
 
     def _want_cardmarket(self, card):
         """Today's Cardmarket prices for the card, in the background (cardmarket.py)."""
+        printing = set(self.parsed.get("printing") or ())
+
         def go():
             try:
                 from . import cardmarket
-                found = cardmarket.price_for(card)
+                found = cardmarket.price_for(card, printing=printing)
                 text = cardmarket.describe(found) or \
                     "Cardmarket: no match for this card in today's price guide."
             except Exception as exc:                          # noqa: BLE001

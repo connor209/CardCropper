@@ -847,8 +847,19 @@ prices now** fetches them at once) and works from the last copy offline. The
 catalogue APIs' own Cardmarket figures can be months old, so these replace
 them on the Market page and in Card lookup.
 
-The files name each set only by a number, so a set is recognised by its
-cards: the expansions holding a card of that name are compared with the
+**Exact where possible.** TCGdex knows each print's own Cardmarket product id —
+every Japanese card, and English cards increasingly — so those are priced by
+id with no matching at all, and the print is the one the title describes: a
+plain title gets the ordinary print (unlimited, unstamped, standard size, not
+reverse), and *1st Edition*, *Shadowless*, *Reverse Holo* or a stamp pick
+theirs. The other prints are listed beside it — Base Set Pikachu reads
+"Unlimited: Trend €10.51 … 1st Edition Shadowless €186.40 · Shadowless red
+cheek €373.93 · poketour 99 stamp €398.20", where the old matching had
+priced it at €39.21 from the wrong product. The line says *exact* when a
+price came this way.
+
+For cards TCGdex has no id for yet, the set is recognised by its cards: the
+expansions holding a card of that name are compared with the
 catalogue's list of the card's set, and an expansion Cardmarket added around
 the set's release wins over a later re-release of the same cards. The answer
 is kept per set (`expansions-<game>.json`). A close call is marked *set

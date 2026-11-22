@@ -88,6 +88,9 @@ class CatalogCard:
     #: for Cardmarket — where the catalogue knows them (TCGdex does).
     ids: dict = field(default_factory=dict)
     language: str = "en"
+    #: Every print TCGdex knows of the card, each with its Cardmarket id:
+    #: [{type, subtype, stamp, size, cardmarket}] — see tcgdex_variants.
+    variants: list = field(default_factory=list)
 
 
 class Results(list):
@@ -553,6 +556,7 @@ def normalise_tcgdex(d, english_name=""):
     image = d.get("image") or ""
     name = d.get("name", "")
     lang = "ja" if "/ja/" in image else "en"
+    variants = _variants_of(d)
     return CatalogCard(
         game="pokemon", id=d.get("id", ""),
         name=f"{english_name} ({name})" if english_name and english_name != name else name,
@@ -561,7 +565,101 @@ def normalise_tcgdex(d, english_name=""):
         set_id=s.get("id", ""), set_total=(s.get("cardCount") or {}).get("official"),
         rarity=d.get("rarity") or "", image_small=image + "/low.png" if image else "",
         image_large=image + "/high.png" if image else "", printings=printings,
-        prices=prices, ids=ids, language=lang)
+        prices=prices, ids=ids, language=lang, variants=variants)
+
+
+def _variants_of(d):
+    """A TCGdex card's prints that Cardmarket sells, each once."""
+    out, seen = [], set()
+    for v in d.get("variants_detailed") or []:
+        cm_id = (v.get("thirdParty") or {}).get("cardmarket")
+        if not cm_id or cm_id in seen:
+            continue
+        seen.add(cm_id)
+        cm = (v.get("pricing") or {}).get("cardmarket") or {}
+        out.append({"type": v.get("type") or "normal", "subtype": v.get("subtype") or "",
+                    "stamp": list(v.get("stamp") or []), "size": v.get("size") or "standard",
+                    "cardmarket": cm_id, "tcgdex_trend": cm.get("trend"),
+                    "tcgdex_updated": (cm.get("updated") or "")[:10]})
+    return out
+
+
+def variant_label(v):
+    """'1st Edition Shadowless', 'Reverse Holo', 'Jumbo', 'Poketour 99 stamp'…"""
+    bits = []
+    for st in v.get("stamp") or []:
+        bits.append("1st Edition" if st == "1st-edition" else f"{st.replace('-', ' ')} stamp")
+    sub = (v.get("subtype") or "").replace("-", " ")
+    if sub and sub != "unlimited":
+        bits.append(sub.capitalize())
+    t = {"reverse": "Reverse Holo", "holo": "Holo"}.get(v.get("type"), "")
+    if t:
+        bits.append(t)
+    if v.get("size") not in (None, "", "standard"):
+        bits.append(v["size"].capitalize())
+    return " ".join(bits) or ("Unlimited" if v.get("subtype") == "unlimited" else "Normal")
+
+
+def choose_variant(variants, claimed=()):
+    """
+    The print a title describes, from a card's variants: a plain title gets
+    the ordinary print — no stamp, not shadowless, not jumbo, not reverse —
+    and printing words (1st Edition, Shadowless, Reverse Holo, a stamp) pick
+    theirs. Returns (chosen or None, the others).
+    """
+    claimed = set(claimed or ())
+
+    def score(v):
+        sc = 0
+        if v.get("size") not in (None, "", "standard"):
+            sc -= 10
+        stamps = set(v.get("stamp") or [])
+        if "1st-edition" in stamps:
+            sc += 5 if "1st-edition" in claimed else -5
+        if stamps - {"1st-edition"}:
+            sc += 3 if "stamped" in claimed else -6
+        sub = v.get("subtype") or ""
+        if sub.startswith("shadowless"):
+            sc += 4 if "shadowless" in claimed else -4
+            if "red-cheek" in sub:
+                sc -= 1
+        if sub in ("", "unlimited"):
+            sc += 1
+        if v.get("type") == "reverse":
+            sc += 5 if "reverse" in claimed else -3
+        return sc
+    if not variants:
+        return None, []
+    ranked = sorted(variants, key=score, reverse=True)
+    return ranked[0], ranked[1:]
+
+
+def tcgdex_variants(card, get=None):
+    """
+    The prints of an English pokemontcg.io card, from TCGdex — which knows
+    each one's Cardmarket product id. Found by name and card number, and
+    confirmed by set name or size. [] when TCGdex does not have it.
+    """
+    if card.variants:
+        return card.variants
+    if card.game != "pokemon" or not card.number:
+        return []
+    want_set = ("base set" if card.set_name == "Base" else card.set_name).lower()
+    for local in dict.fromkeys([card.number, card.number.zfill(3)]):
+        rows = fetch_json(f"{TCGDEX}/en/cards?" + urllib.parse.urlencode(
+            {"name": f"eq:{card.name}", "localId": local}), get=get, max_age=30 * 86400)
+        for r in rows if isinstance(rows, list) else []:
+            d = fetch_json(f"{TCGDEX}/en/cards/{urllib.parse.quote(r['id'])}", get=get,
+                           max_age=2 * 86400)
+            if not isinstance(d, dict):
+                continue
+            s = d.get("set") or {}
+            same_set = (s.get("name") or "").lower() == want_set or (
+                card.set_total and (s.get("cardCount") or {}).get("official") == card.set_total)
+            if same_set:
+                card.variants = _variants_of(d)
+                return card.variants
+    return []
 
 
 def _jp_species(dex, get=None):

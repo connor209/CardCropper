@@ -131,6 +131,29 @@ def main():
         check(got and got["prices"][0] == ("Trend", 3.5) and "TCGdex" in got["created"],
               f"an id missing from today's guide should fall back to TCGdex's copy: {got}")
 
+        # English cards with TCGdex variants: the print the title describes.
+        variants = [
+            {"type": "normal", "subtype": "unlimited", "stamp": [], "size": "standard",
+             "cardmarket": 1001, "tcgdex_trend": 7.0},
+            {"type": "normal", "subtype": "shadowless", "stamp": ["1st-edition"],
+             "size": "standard", "cardmarket": 1002, "tcgdex_trend": 186.0},
+            {"type": "normal", "subtype": "unlimited", "stamp": ["poketour-99"],
+             "size": "standard", "cardmarket": 1003, "tcgdex_trend": 398.0},
+            {"type": "normal", "subtype": "", "stamp": [], "size": "jumbo",
+             "cardmarket": 1004, "tcgdex_trend": 13.0}]
+        pika = CatalogCard("pokemon", "base1-58", "Pikachu", "58", "Base", "base1", 102,
+                           "1999-01-09", "", "", "", [], {}, "", variants=variants)
+        plain = cm.price_for(pika)
+        check(plain["exact"] and plain["id"] == 1001 and plain["print"] == "Unlimited",
+              f"a plain title should get the ordinary print: {plain}")
+        check(any("1st Edition" in label for label, _ in plain["variant"]),
+              "the other prints should be listed beside it")
+        first = cm.price_for(pika, printing={"1st-edition", "shadowless"})
+        check(first["id"] == 1002, f"1st Edition Shadowless not picked: {first}")
+        check(cm.price_for(pika, printing={"stamped"})["id"] == 1003, "stamp not picked")
+        check(not any("everse" in label for label, _ in plain["variant"]),
+              "no reverse-holo figure for a card with no reverse print")
+
         def broken(url):
             return b"<html>maintenance</html>"
         before = os.path.getmtime(cm._paths("pokemon")[0])
