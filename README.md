@@ -608,8 +608,9 @@ order — front + back, the front's crop sheet, the back's crop sheet, then the
 the crop sheets (again for the back's), **P** the panels, **F** or **B** one face
 alone. Keys **1-6** or **N L M H D X** grade it NM / LP / MP / HP / DMG / HOLD.
 Whole images fit the window unless a zoom is picked; the panels keep their
-own zoom. Wear counts are pre-filled from the
-checks. The rules are enforced, not suggested:
+own zoom. The back's wear counts are pre-filled from the checks; the front's
+are shown but not pre-filled, since foil and artwork at a front's edge read
+as wear (a Hoopa ex holo scored 58 points) — enter the front's yourself. The rules are enforced, not suggested:
 
 - NM needs every panel of both faces opened, none unchecked, and fewer than 3
   wear points across both faces.

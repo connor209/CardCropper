@@ -35,6 +35,14 @@ from PIL import Image, ImageTk
 
 from . import audits, batches, checks, conditioning, grading, imaging, wear
 
+#: Faces whose machine counts are put in the wear boxes. Only the back: a back
+#: is one even print on every card, so a white nick stands out from it. On a
+#: front the edge is artwork — on KW3, a Hoopa ex holo, foil glints read as 58
+#: wear points and 3 whitened corners on a card that may be NM, and those
+#: numbers would have capped it at LP. A front count goes in only once it has
+#: been calibrated on a golden set.
+PREFILL_FACES = ("back",)
+
 KEYMAP = {"1": "NM", "2": "LP", "3": "MP", "4": "HP", "5": "DMG", "6": "HOLD",
           "n": "NM", "l": "LP", "m": "MP", "h": "HP", "d": "DMG", "x": "HOLD"}
 PANEL_NAMES = {"tl": "top-left corner", "tr": "top-right corner",
@@ -299,11 +307,18 @@ class GradeTab(ttk.Frame):
         self.set_view("both", redraw=False)
         chk = self.checks.get(sku, {})
         for f in grading.FACES:
-            self.points[f].set(chk.get(f"{f}_points") or "0")
-            self.corners[f].set(chk.get(f"{f}_corners_whitened") or "0")
+            if f in PREFILL_FACES:
+                self.points[f].set(chk.get(f"{f}_points") or "0")
+                self.corners[f].set(chk.get(f"{f}_corners_whitened") or "0")
+            else:
+                self.points[f].set("")
+                self.corners[f].set("")
         self.crease_var.set(grading.CREASE_NONE)
         self.note_var.set("")
-        self.whitening_lbl.configure(text=chk.get("whitening", ""))
+        counted = chk.get("whitening", "")
+        self.whitening_lbl.configure(text=(
+            f"{counted}\nFront not pre-filled — foil and artwork at a front's edge "
+            "read as wear. Enter the front's count yourself (blank = 0).") if counted else "")
         problems = "; ".join(filter(None, [chk.get("status") if chk.get("status") not in
                                            (None, "", "OK") else "",
                                            chk.get("hold_reasons"), chk.get("notes")]))
