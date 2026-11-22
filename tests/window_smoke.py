@@ -186,6 +186,26 @@ def market_checks(work):
     market.undecide("Lugia 78/124 Fates Collide", "NM")
     check(market.decision_for("Lugia 78/124 Fates Collide", "NM") is None, "undecide failed")
 
+    # Watch list and trend.
+    market.watch("Lugia 78/124 Fates Collide", condition="NM", price=4.49)
+    check(market.is_watched("Lugia 78/124 Fates Collide LP"), "watch is by card, any grade")
+    res = market.check_watch(fetch=lambda cards: {
+        c["id"]: {"status": "ok", "sold": [dict(sold[0], price=9.0)] * 6} for c in cards})
+    check(len(res) == 1 and res[0][2], f"a jump from £4.49 should count as moved: {res}")
+    row = market.watched()[0]
+    check(row["previous_price"] == 4.49 and row["last_price"] == res[0][1].suggested,
+          f"watch prices not rolled on: {row}")
+    check(not market.watch_due(), "just checked, so not due")
+    check(not market.moved(2.49, 2.99) and market.moved(2.49, 4.99) and
+          market.moved(40.0, 50.0) and not market.moved(40.0, 41.0), "moved() thresholds")
+    market.save_search("Lugia 78/124 Fates Collide", {"sold": sold}, p)
+    pts = market.trend("Lugia 78/124 Fates Collide NM", "NM")
+    check(len(pts) == 2 and "over 2 searches" in market.describe_trend(pts),
+          f"trend wrong: {pts}")
+    market.unwatch("Lugia 78/124 Fates Collide")
+    check(not market.watched(), "unwatch failed")
+    market.forget()
+
     sid = market.save_search("Lugia 78/124", {"sold": sold, "status": "ok"}, p)
     again, ev, row = market.load_search(sid)
     check(row["language"] == "english", "a search's language was not kept")

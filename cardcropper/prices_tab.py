@@ -102,6 +102,7 @@ class PricesTab(ttk.Frame):
         self._build_body()
         self._poll()
         self.after(200, self.refresh_history)
+        self.after(250, self.refresh_watch)
 
     # ------------------------------------------------------------ layout
 
@@ -210,8 +211,35 @@ class PricesTab(ttk.Frame):
         wrap.grid(row=1, column=0, sticky="nsew")
         self.hist.bind("<<TreeviewSelect>>", lambda _e: self._picked_history())
         self.lists.add(hist_page, text="History")
+        watch_page = ttk.Frame(self.lists, padding=(0, 4, 0, 0))
+        watch_page.columnconfigure(0, weight=1)
+        watch_page.rowconfigure(1, weight=1)
+        wbar = ttk.Frame(watch_page)
+        wbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        self.check_btn = ttk.Button(wbar, text="Check prices now", command=self.check_watch)
+        self.check_btn.pack(side="left")
+        ui.tip(self.check_btn, "Search every watched card again and show which prices "
+                               "moved. Also happens by itself once a week when the app opens "
+                               "(signed in to Comp Finder).")
+        rm = ttk.Button(wbar, text="Stop watching", style="Ghost.TButton",
+                        command=self.unwatch_selected)
+        rm.pack(side="left", padx=(6, 0))
+        ui.tip(rm, "Take the selected cards off the watch list.")
+        wrap, self.watch_tv = ui.tree(watch_page, (
+            ("title", "Card", 180, {"stretch": True}), ("cond", "Cond.", 44),
+            ("price", "Price", 58, {"anchor": "e"}), ("change", "Change", 64, {"anchor": "e"}),
+            ("checked", "Checked", 80)), height=12, selectmode="extended")
+        wrap.grid(row=1, column=0, sticky="nsew")
+        self.watch_tv.tag_configure("up", foreground=ui.C["ok"])
+        self.watch_tv.tag_configure("down", foreground=ui.C["bad"])
+        self.watch_tv.bind("<Double-1>", lambda _e: self._open_watched())
+        ui.tip(self.watch_tv, "Cards you watch — ones you hold several of, or valuable ones. "
+                              "Green rose, red fell by enough to act on. Double-click to look "
+                              "at the card's latest search.")
+        self.lists.add(watch_page, text="Watch list")
         ui.tip(self.lists, "Cards: what you just searched, opened or tested.  History: every "
-                           "search kept with its listings — look again without searching.")
+                           "search kept with its listings — look again without searching.  "
+                           "Watch list: cards re-checked weekly, with how far each moved.")
         pane.add(left, weight=1)
 
         # Right: one card in depth.
@@ -228,7 +256,14 @@ class PricesTab(ttk.Frame):
         self.chosen_lbl.grid(row=1, column=0, sticky="w")
         self.use_btn = ttk.Button(head, text="Use this price…", command=self.use_price,
                                   state="disabled")
-        self.use_btn.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.use_btn.grid(row=0, column=2, rowspan=2, sticky="e")
+        self.watch_btn = ttk.Button(head, text="☆ Watch", style="Ghost.TButton",
+                                    command=self.toggle_watch, state="disabled")
+        self.watch_btn.grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 6))
+        ui.tip(self.watch_btn, "Add this card to the watch list: checked again every week, "
+                               "and flagged when its price moves.")
+        self.trend_lbl = ttk.Label(head, style="Muted.TLabel")
+        self.trend_lbl.grid(row=2, column=0, sticky="w")
         ui.tip(self.use_btn, "Keep this price for this card at this condition. Batch & price "
                              "uses it for that card for the next "
                              f"{market.DECISION_DAYS} days instead of working one out — "
@@ -398,6 +433,7 @@ class PricesTab(ttk.Frame):
                 kind, payload = self.events.get_nowait()
                 if kind == "err":
                     self.search_btn.configure(state="normal")
+                    self.check_btn.configure(state="normal", text="Check prices now")
                     if market.is_login_error(payload):
                         self._login_refused(payload)
                         continue
@@ -414,6 +450,8 @@ class PricesTab(ttk.Frame):
                     self._fill(priced, expected, evidence, variants)
                     self.status.configure(text=note, foreground=ui.C["muted"])
                     self.refresh_history()
+                    self.refresh_watch()
+                    self.check_btn.configure(state="normal", text="Check prices now")
         except queue.Empty:
             pass
         self.after(150 if budget else 15, self._poll)
@@ -810,6 +848,14 @@ class PricesTab(ttk.Frame):
         self.card_title.configure(text=p.title + (f"   ·   {p.condition}" if p.condition else ""))
         self.use_btn.configure(state="normal")
         self._show_chosen(p)
+        try:
+            points = market.trend(p.title, p.condition)
+            watching = market.is_watched(p.title)
+        except Exception:                                     # noqa: BLE001
+            points, watching = [], False
+        text = market.describe_trend(points)
+        self.trend_lbl.configure(text=f"Trend: {text}" if text else "")
+        self.watch_btn.configure(state="normal", text="★ Watching" if watching else "☆ Watch")
         f = market.figures(p)
         price_note = f"{p.decision}: {p.reason}" if p.decision else ""
         if whatif and base.suggested != p.suggested:
@@ -1213,6 +1259,93 @@ class PricesTab(ttk.Frame):
                 self.sales.selection_set(str(i))
                 self.sales.see(str(i))
                 break
+
+    # ------------------------------------------------------------ watch list
+
+    def toggle_watch(self):
+        if self.current is None:
+            return
+        p = self._shown()
+        if market.is_watched(p.title):
+            market.unwatch(p.title)
+        else:
+            market.watch(p.title, p.game, p.condition, self._lang(), p.suggested)
+        self.show()
+        self.refresh_watch()
+
+    def unwatch_selected(self):
+        for iid in self.watch_tv.selection():
+            market.unwatch(self.watch_tv.set(iid, "title"))
+        self.refresh_watch()
+
+    def refresh_watch(self, moved=None):
+        try:
+            rows = market.watched()
+        except Exception:                                     # noqa: BLE001
+            return
+        self.watch_tv.delete(*self.watch_tv.get_children())
+        for r in rows:
+            old, new = r["previous_price"], r["last_price"]
+            change, tag = "", ()
+            if old and new is not None and old != new:
+                change = f"{(new - old) / old * 100:+.0f}%"
+                if market.moved(old, new):
+                    tag = ("up",) if new > old else ("down",)
+            self.watch_tv.insert("", "end", tags=tag, values=(
+                r["title"], r["condition"] or "NM", _money(new) or "—", change,
+                market.ago(r["last_checked"]) if r["last_checked"] else "never"))
+        ui.restripe(self.watch_tv)
+        n = len(rows)
+        self.lists.tab(2, text=f"Watch list ({n})" if n else "Watch list")
+
+    def check_watch(self, quiet=False):
+        if not market.watched():
+            if not quiet:
+                self.status.configure(text="Nothing on the watch list yet — ☆ Watch a card "
+                                           "first.", foreground=ui.C["muted"])
+            return
+        if not pricing.comp_finder_cookie():
+            if not quiet:
+                self._login_hint()
+            return
+        if self.worker and self.worker.is_alive():
+            return
+        self.check_btn.configure(state="disabled", text="Checking…")
+
+        def run():
+            res = market.check_watch()
+            priced = [p for _, p, _ in res]
+            moved = [(r, p) for r, p, m in res if m]
+            note = (f"Checked {len(res)} watched card(s): {len(moved)} moved — " +
+                    ", ".join(f"{r['title'][:30]} {_money(r['last_price'])}→"
+                              f"{_money(p.suggested) or 'none'}" for r, p in moved[:4])
+                    if moved else f"Checked {len(res)} watched card(s): no price moved enough "
+                                  "to act on.")
+            return priced, {}, {}, note
+        self._background("Checking the watch list…", run)
+
+    def auto_check_watch(self):
+        """Once a week, on opening the app: check the watch list quietly."""
+        try:
+            if market.watch_due() and pricing.comp_finder_cookie():
+                self.check_watch(quiet=True)
+        except Exception:                                     # noqa: BLE001
+            pass
+
+    def _open_watched(self):
+        sel = self.watch_tv.selection()
+        if not sel:
+            return
+        title = self.watch_tv.set(sel[0], "title")
+        for iid, sid in self.history_ids.items():
+            if self.hist.set(iid, "title") == title:
+                self.lists.select(1)
+                self.hist.selection_set(iid)
+                self.hist.see(iid)
+                return
+        self.title_var.set(title)
+        self.status.configure(text="No saved search for that card yet — Search sold to get "
+                                   "one.", foreground=ui.C["muted"])
 
     def _show_chosen(self, p):
         try:

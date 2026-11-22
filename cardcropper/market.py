@@ -390,6 +390,144 @@ def undecide(title, condition, path=None):
         db.close()
 
 
+# ---------------------------------------------------------------- trend & watch list
+
+#: A watched card has "moved" when its price changes by this share or more —
+#: or by MOVED_POUNDS, whichever is smaller, so a £2.49 card moving to £4.99
+#: counts as much as a £40 one moving to £50.
+MOVED_SHARE, MOVED_POUNDS = 0.20, 2.0
+#: How often watched cards are checked again on their own (on opening the app).
+WATCH_EVERY_DAYS = 7
+
+
+def trend(title, condition=None, path=None):
+    """
+    This card's price at each past search, oldest first:
+    [{at, suggested, n_kept, language}]. The searches are matched by card,
+    whatever grade the title ended with.
+    """
+    key = pricing.card_key(title)
+    db = connect(path)
+    try:
+        rows = [dict(r) for r in db.execute(
+            "SELECT title, condition, searched_at, suggested, n_kept, language FROM searches "
+            "ORDER BY searched_at")]
+    finally:
+        db.close()
+    return [{"at": r["searched_at"], "suggested": r["suggested"], "n_kept": r["n_kept"],
+             "language": r.get("language") or "english"}
+            for r in rows if pricing.card_key(r["title"]) == key
+            and (condition is None or (r["condition"] or "NM") == condition)
+            and r["suggested"] is not None]
+
+
+def moved(old, new):
+    """Whether a price change is big enough to act on."""
+    if old is None or new is None:
+        return old != new
+    change = round(abs(new - old), 2)
+    # More than one step of the .49/.99 ladder: £2.49 → £2.99 is rounding noise.
+    return change >= min(MOVED_POUNDS, MOVED_SHARE * max(old, 0.01)) \
+        and change > pricing.LADDER_STEP
+
+
+def describe_trend(points):
+    """'£4.49 (12 Oct) → £5.49 (today), +22% over 3 searches' — or ''."""
+    if len(points) < 2:
+        return ""
+    import datetime as dt
+    a, b = points[0], points[-1]
+
+    def day(ts):
+        d = dt.date.fromtimestamp(ts)
+        return "today" if d == dt.date.today() else d.strftime("%d %b")
+    pct = (b["suggested"] - a["suggested"]) / a["suggested"] * 100 if a["suggested"] else 0
+    return (f"£{a['suggested']:.2f} ({day(a['at'])}) → £{b['suggested']:.2f} ({day(b['at'])}), "
+            f"{pct:+.0f}% over {len(points)} searches")
+
+
+def watch(title, game="pokemon", condition="NM", language="english", price=None, path=None):
+    db = connect(path)
+    try:
+        db.execute("INSERT OR REPLACE INTO watch (card_key, title, game, condition, language, "
+                   "added_at, last_price, previous_price, last_checked) "
+                   "VALUES (?,?,?,?,?,?,?,NULL,?)",
+                   (pricing.card_key(title), title, game, condition, language, time.time(),
+                    price, time.time() if price is not None else None))
+        db.commit()
+    finally:
+        db.close()
+
+
+def unwatch(title, path=None):
+    db = connect(path)
+    try:
+        db.execute("DELETE FROM watch WHERE card_key=?", (pricing.card_key(title),))
+        db.commit()
+    finally:
+        db.close()
+
+
+def watched(path=None):
+    db = connect(path)
+    try:
+        return [dict(r) for r in db.execute("SELECT * FROM watch ORDER BY title")]
+    finally:
+        db.close()
+
+
+def is_watched(title, path=None):
+    db = connect(path)
+    try:
+        return db.execute("SELECT 1 FROM watch WHERE card_key=?",
+                          (pricing.card_key(title),)).fetchone() is not None
+    finally:
+        db.close()
+
+
+def watch_due(path=None, now=None):
+    """Whether the watch list has not been checked for WATCH_EVERY_DAYS."""
+    rows = watched(path)
+    if not rows:
+        return False
+    last = max((r["last_checked"] or 0) for r in rows)
+    return (now or time.time()) - last >= WATCH_EVERY_DAYS * 86400
+
+
+def check_watch(fetch=None, path=None, progress=None):
+    """
+    Search every watched card again, in one Comp Finder batch, price each
+    under its own condition and language, keep the searches in History, and
+    return [(row, new Priced, moved?)].
+    """
+    rows = watched(path)
+    if not rows:
+        return []
+    fetch = fetch or (lambda cards: pricing.batch_comps(cards, progress=progress))
+    ev = fetch([{"id": f"watch-{i}", "title": r["title"]} for i, r in enumerate(rows)])
+    out = []
+    db_rows = []
+    for i, r in enumerate(rows):
+        e = ev.get(f"watch-{i}") or {}
+        sold = e.get("sold")
+        put_back = language_reasons(sold) if r["language"] == "all" else ()
+        p = pricing.price_card("watch", r["title"], sold, r["game"] or "pokemon",
+                               r["condition"] or "NM", status=e.get("status", "ok"),
+                               put_back=put_back)
+        save_search(r["title"], e, p, r["game"] or "pokemon", r["condition"] or "NM",
+                    path=path, language=r["language"] or "english", source="watch")
+        out.append((r, p, moved(r["last_price"], p.suggested)))
+        db_rows.append((p.suggested, r["last_price"], time.time(), r["card_key"]))
+    db = connect(path)
+    try:
+        db.executemany("UPDATE watch SET last_price=?, previous_price=?, last_checked=? "
+                       "WHERE card_key=?", db_rows)
+        db.commit()
+    finally:
+        db.close()
+    return out
+
+
 # ---------------------------------------------------------------- history
 
 
@@ -410,6 +548,10 @@ def connect(path=None):
         variant TEXT, source TEXT, searched_at REAL NOT NULL, n_kept INTEGER,
         n_found INTEGER, suggested REAL, query TEXT, evidence TEXT)""")
     db.execute("CREATE INDEX IF NOT EXISTS searches_title ON searches(title)")
+    db.execute("""CREATE TABLE IF NOT EXISTS watch (
+        card_key TEXT PRIMARY KEY, title TEXT NOT NULL, game TEXT, condition TEXT,
+        language TEXT, added_at REAL, last_price REAL, previous_price REAL,
+        last_checked REAL)""")
     db.execute("""CREATE TABLE IF NOT EXISTS decisions (
         card_key TEXT NOT NULL, condition TEXT NOT NULL, price REAL NOT NULL, title TEXT,
         n_sales INTEGER, basis REAL, note TEXT, decided_at REAL NOT NULL,
