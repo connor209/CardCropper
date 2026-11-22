@@ -169,6 +169,7 @@ importing sales from a Terapeak CSV, and the Comp Finder login."""),
 1. Make batches — add the cropped folders and CardUploader's job history; Preview, then
    Make batches & check. Codes follow the highest one CardUploader has seen.
 2. Price & report — a CardUploader job's data priced from Comp Finder's sold comps.
+   See sales in Market opens the result card by card, with every listing behind each price.
 3. Write change file — conditions, prices and variant switches for the extension.
 
 Each button runs the same code as the command line and prints what it did."""),
@@ -366,6 +367,8 @@ TIPS = {
         "Report again": "Rewrite the report — after filling in Terapeak checks.",
         "Write change file": "Conditions, prices and variant switches in one file for the "
                              "extension.",
+        "See sales in Market": "Open the priced batch on the Market page: each card's price, "
+                               "chart and every sold listing behind it.",
         "Test (golden prices)": "Price the golden cards live and check the rules still give "
                                 "the expected prices.",
         "Comp Finder login": "Open the file the Comp Finder session cookie goes in.",

@@ -367,8 +367,10 @@ class PricesTab(ttk.Frame):
             ev = {r.get("id"): r for r in json.load(fh).get("results", [])}
         self.events.put(("ok", self._golden(ev, f"Last golden run ({path})")))
 
-    def open_priced(self):
+    def open_priced(self, folder=None):
+        """A priced-<job>.json from Price & report: every card, every sale behind it."""
         path = filedialog.askopenfilename(title="priced-<job>.json from Price & report",
+                                          initialdir=folder or None,
                                           filetypes=[("Priced batch", "priced-*.json"),
                                                      ("JSON", "*.json")])
         if not path:

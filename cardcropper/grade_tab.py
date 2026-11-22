@@ -243,6 +243,10 @@ class GradeTab(ttk.Frame):
         self.ai_btn.grid(row=15, column=0, columnspan=3, pady=(10, 0), sticky="ew")
         self.status = ttk.Label(form, wraplength=260, justify="left")
         self.status.grid(row=16, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        # How the grade library's cards with the same back counts were graded.
+        # Advice beside the form, never a pre-selected grade.
+        self.library_lbl = ttk.Label(form, wraplength=260, justify="left", foreground="#666")
+        self.library_lbl.grid(row=17, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
     # ------------------------------------------------------------ loading
 
@@ -326,9 +330,26 @@ class GradeTab(ttk.Frame):
         self.card_lbl.configure(text=f"{sku}   ({self.index + 1} of {len(self.cards)})"
                                 + ("   GOLDEN — blind" if self.golden else ""))
         self.status.configure(text="")
+        self._library_hint(sku)
         self._forget_others()
         self._schedule()
         self.redraw()
+
+    def _library_hint(self, sku):
+        if self.golden:
+            self.library_lbl.configure(text="")      # a blind check stays blind
+            return
+        try:
+            from . import library
+            counts, near = library.similar(
+                self._line(), back_points=int(self.points["back"].get() or 0),
+                back_corners=int(self.corners["back"].get() or 0), exclude=sku)
+        except Exception:                                     # noqa: BLE001
+            near = []
+        self.library_lbl.configure(text=(
+            "Graded cards with these back counts: " + ", ".join(
+                f"{g} {counts[g]}" for g in grading.GRADES if counts.get(g))
+            + f" (nearest {len(near)})") if len(near) >= 3 else "")
 
     def _paths(self, i):
         _, front, back, _, _ = self.cards[i]

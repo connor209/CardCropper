@@ -162,12 +162,32 @@ cannot be downloaded without signing in, so the check fails and stays quiet.
 
 ## Using it
 
-Double-click `CardCropper.bat` (or `CardCropper.exe`). The window's tabs:
-**Crop cards**, **Scan folders** (the day's empty folders, for scanning a
-stack at a time), **Split into stacks** (for scanning a long run in one go
-and filing it into those same folders afterwards), **Condition a CSV**, and
-the batch workflow after cropping — **Batch & price**, **Grade** and
-**Variants** (see [From cropped folders to CardUploader](#from-cropped-folders-to-carduploader)).
+Double-click `CardCropper.bat` (or `CardCropper.exe`).
+
+### The window
+
+A sidebar lists the pages in the order the work runs, and **Home** shows
+where things stand: how many cards have been graded, how far the golden set
+has come, whether Comp Finder is logged in. Home also has a quick search
+straight to a card's sold prices or catalogue entry.
+
+| Stage | Pages |
+|---|---|
+| **1 · Scan** | **Scan folders** (the day's empty folders), **Split into stacks** (one long scanning run filed into stack folders), **Crop cards** |
+| **2 · Grade** | **Condition a CSV** (rank an export by wear, and grade it beside the ranking), **Grade** (card by card, panel by panel), **Grade library** (every hand grade, and the golden sets) |
+| **3 · List & price** | **Variants**, **Card lookup** (catalogue, printings, scan matching), **Market** (eBay sold listings), **Batch & price** |
+
+Every page says in one line what it is for, and has a step-by-step guide
+under **Guide ▾** (F1). **Hover over any control** for what it does — and, for
+one that is greyed out, what it is waiting for. Each page has one primary
+action in blue; the actions used now and then are behind its **More** menu.
+
+Keys: **Ctrl+1…9** jump between pages in sidebar order, **Ctrl+0** goes Home,
+**Ctrl+B** hides the sidebar, **Ctrl+,** opens the settings folder.
+**Help → Keyboard shortcuts** lists every page's keys. The **Tools** menu
+holds the Comp Finder login, importing grades into the library, and the
+update check. The status bar at the bottom shows the build, the library's
+size and the Comp Finder login.
 
 ### Crop cards
 
@@ -487,7 +507,17 @@ purpose: copies of one card that grade differently are different products.
    lands in `likely-worse`, the run says so: card-edge detection has failed and
    the scores mean nothing.
 
-2. **Grade in `conditioning-review.csv`** against the house guide: `grade`
+2. **Grade** — in the window, or in `conditioning-review.csv`. Select a card
+   in the ranked table and the panel beside it shows its back corners (or
+   either face's crops, or both faces). **1-6** pick NM / LP / MP / HP / DMG /
+   HOLD, **Phrases** adds the usual flaw wording to the note, and **Enter**
+   saves the card's row of the review sheet with `looked = yes` and moves to
+   the next card. A grade above HP whose note mentions a crease is refused
+   there and then. **Open prepared batch…** opens a batch prepared earlier,
+   ready to grade, without preparing it again. Every grade saved here also
+   goes into the [grade library](#the-grade-library-and-golden-sets).
+
+   Or grade in `conditioning-review.csv` itself against the house guide: `grade`
    (NM / LP / MP / HP / DMG or `HOLD`), a one-line `flaw_note`, `confidence`,
    the `evidence` you saw, and `looked` = `yes` if you opened a crop. **The
    score is not a grade and is back-only** — a card can score clean and still
@@ -648,6 +678,38 @@ front_crops, back_crops`).
 - Target: NM overgrade rate under 2% per game. Above it, that game's NM lists
   as LP until two clean audits in a row; `--cli audit` shows the status.
 
+### The grade library and golden sets
+
+Every card graded by hand is recorded in the **grade library**
+(`grade-library.sqlite` in the settings folder) as the grade is made: each
+pass keyed on the Grade tab, and each grade in a conditioning review sheet,
+whether it was saved in the window or recorded and written from the sheet.
+The card's four images are copied into `grade-library/` beside it, so the
+record outlives the batch folder. Machine opinions are never recorded as
+grades — a triage band, a HOLD, a Claude second opinion nobody accepted. Blind
+checks of golden cards are kept apart: they test the grader.
+
+The **Grade library** page lists them all: each card's images, every grade it
+has had (the worse pass stands), and how cards that measured like it were
+graded. It marks the cards that look **borderline** and says why: passes
+that disagreed, a keyed grade the rules capped, wear counts one short of a
+rule's limit, a grade keyed with low confidence. A blind check needs three
+borderline cards in ten, so those are the ones worth promoting.
+
+**Add to golden set…** puts a card in its line's `golden/<line>.csv` — the
+file the blind checks read — at the grade it has **in hand** (check the
+physical card first), pointing at the library's own copies of its images.
+The strip at the top shows how far each line's set has got: 30 cards, and
+enough borderline ones for a blind check. **Import grades…** brings in grades
+made before the library existed (every `grades-*.csv` and
+`conditioning-review.csv` under a folder; safe to run twice), and **Re-read
+golden-set files** picks up cards added to a golden file by hand.
+
+The Grade tab and the Condition panel show the library's advice beside each
+card — "graded cards with these back counts: LP 5, MP 1" — once it has enough
+cards. It is advice from your own past grades, never a pre-selected grade,
+and it stays hidden on a blind check.
+
 ### 4. Variants (Variants tab, `--cli variants`)
 
 Once CardUploader has matched a batch, save its job data with the extension
@@ -699,12 +761,58 @@ recommendations not applied, the Connor list, and cards kept at an old price
 without fresh comps. **A batch is never called READY while anything was
 skipped.**
 
-**Prices tab.** The working behind any price, in the window: **Golden test**
-(live) or **Last golden run** (the saved sales, no new search), **Open priced
-batch…** for a `priced-<job>.json`, or type any listing title and **Look up**.
-Select a card to see every sale Comp Finder found — kept, or left out and why
-(graded, other printing, a lot, outside the UK…) — and the price worked out
-step by step. Double-click a sale to open the eBay listing.
+**Market page** (was the Prices tab). Every eBay sale behind a price, in the
+window. Type a card or listing title and **Search sold** (Enter); or open a
+`priced-<job>.json` (**See sales in Market** on Batch & price, or **More →
+Open priced batch…**); or run the golden test from **More**. For the card
+selected:
+
+- **Figures** — the suggested price, its basis (the 40th percentile, or the
+  lowest of fewer than 4), the middle sale, the cheapest and dearest, how
+  many sales counted out of how many found, and the last sale date.
+- **Chart** — every sale by date and total: filled dots counted, hollow ones
+  were left out, with the suggested price and its basis drawn across. A sale
+  far above the rest (a graded slab, say) is pinned to the top with ▲ rather
+  than squashing the scale. Hover a dot for the listing; click it to select it.
+- **Sold listings** — each with whether it counted and why not (graded,
+  another printing, a lot, abroad…). Select one for its details, its
+  picture when the evidence carries one, and **Open on eBay ↗**.
+- **Leave out** (or Delete) works the price again without that sale — the
+  "what if that one was a mistake?" — and **Put back** / **Reset what-if**
+  undo it. A what-if changes nothing on any listing.
+- **How this price was worked out** — the working, step by step.
+
+**History** keeps every search with the listings it found (`market.sqlite` in
+the settings folder), so a card can be looked at again later without
+searching or logging in; it is priced again under today's rules when opened.
+**eBay ↗** opens eBay's own UK sold search for the title in the browser —
+always available, no login. **More → Import sales from CSV…** prices sales
+copied out of Terapeak or eBay's sold search (any CSV with a title and price
+column; postage, date, URL and condition are used when present) under exactly
+the same rules. **More → Comp Finder login…** pastes the session cookie
+straight into its file.
+
+### Card lookup
+
+Search the catalogue by name, number and set — or paste a listing title. Pokémon
+comes from pokemontcg.io, Yu-Gi-Oh from YGOPRODeck; answers are cached in
+`catalog-cache/` in the settings folder for a week, so a repeat lookup works
+offline. (pokemontcg.io is sometimes slow or returns errors; search again. A
+key in `POKEMONTCG_API_KEY` raises its rate limit.) For each candidate:
+
+- **Printings** the card exists in (Normal, Holo, Reverse Holo, 1st Edition…)
+  and **reference prices** (TCGplayer market in USD, Cardmarket trend in EUR —
+  a cross-check, not eBay UK prices);
+- the **variant check**: a printing named in the search ("Reverse Holo") is
+  checked against the printings that exist — *Base Set Pikachu has no Reverse
+  Holo* — and a card that also exists in another printing says so, to check
+  the foil before listing;
+- **Match a scan…** compares a scan with every candidate's catalogue image
+  and ranks them by likeness. It tells you **which card** a scan is — not
+  which printing, since a scan cannot show foil. The thresholds (80% "likely
+  the same card", 60-80% "uncertain") are provisional, tuned on simulated
+  scans;
+- **Price this on eBay** sends the card to the Market page.
 
 ### 6. Push to CardUploader (`--cli changes`, then the extension)
 
@@ -779,6 +887,13 @@ or Ubuntu: `sudo apt install python3-tk`.
 python -m tests.smoke
 node extension/test/push.test.js
 ```
+
+`tests.smoke` also runs the conditioning, features, catalogue and window
+suites. With a display, the window suite builds the whole window and every
+page, checks that every tooltip in `cardcropper/guide.py` still finds the
+control it was written for (a renamed button would otherwise lose its
+explanation silently), that Ctrl+1 changes page without grading a card, and
+that grading on the Condition tab writes the review sheet and the library.
 
 One real scan is kept under `tests/fixtures/`, byte for byte, because the
 failure it carries cannot be reconstructed: re-encoding it at any quality —

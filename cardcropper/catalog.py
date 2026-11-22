@@ -590,9 +590,13 @@ def title_for(card, printing=""):
 
 
 def ebay_sold_url(query, site="co.uk"):
-    """eBay's sold-and-completed search for `query`, most recent first."""
-    params = urllib.parse.urlencode({"_nkw": query, "LH_Sold": 1, "LH_Complete": 1, "_sop": 13})
-    return f"https://www.ebay.{site}/sch/i.html?{params}"
+    """
+    eBay's sold-and-completed search for `query`, most recent first — the
+    same search the Market page opens (UK sellers only on ebay.co.uk), so
+    the two links never disagree.
+    """
+    from . import market
+    return market.ebay_sold_url(query, site=f"www.ebay.{site}")
 
 
 # ---------------------------------------------------------------- image matching

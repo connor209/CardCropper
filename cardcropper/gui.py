@@ -860,6 +860,7 @@ def main():
         traceback.print_exc()
         lookup = None
     ops = sh_.add_page("batch", OpsTab)
+    ops.view_in_market = lambda folder: (sh_.show("prices"), prices.open_priced(folder))
     sh_.add_page("home", lambda m: shell_mod.HomePage(m, sh_))
 
     workers = (crop, split, condition, ops, grade, prices, lib, lookup)

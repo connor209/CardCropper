@@ -97,6 +97,11 @@ class OpsTab(ttk.Frame):
         ttk.Button(act, text="Price & report", command=self.price).pack(side="left", padx=8)
         ttk.Button(act, text="Report again", command=self.report).pack(side="left")
         ttk.Button(act, text="Write change file", command=self.changes).pack(side="left", padx=8)
+        #: Set by the window: opens a priced-<job>.json on the Market page,
+        #: where every card's sales can be looked through listing by listing.
+        self.view_in_market = None
+        ttk.Button(act, text="See sales in Market",
+                   command=self._view_priced).pack(side="left")
 
         note = ttk.Frame(self)
         note.grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -127,6 +132,12 @@ class OpsTab(ttk.Frame):
         else:
             _reveal(path)
         self.log.insert("end", f"\nPaste the cookie into {path}, save, then Test.\n")
+
+    def _view_priced(self):
+        job = self.job_var.get().strip()
+        folder = os.path.dirname(os.path.abspath(job)) if job else None
+        if self.view_in_market:
+            self.view_in_market(folder)
 
     def pick_folder(self):
         d = filedialog.askdirectory(title="A cropped folder")
