@@ -661,6 +661,10 @@ def chart_hover_checks():
         page = tk.Frame(root)
         page.pack(fill="both", expand=True)
         tab = PricesTab(page)
+        # No reference-price lookup: it goes out to the network on a pool
+        # thread, and one finishing after the window has closed lets Python
+        # free Tk objects from that thread — which kills Tk on Windows.
+        tab._want_ref = lambda title: None
         sold = [{"title": f"Lugia 78/124 Fates Collide #{i}", "price": 3 + i * 0.4,
                  "postage": 0.5, "excluded_reason": None if i % 4 else "graded",
                  "date": (_dt.date(2026, 11, 1) - _dt.timedelta(days=i * 3)).isoformat()}
@@ -686,6 +690,7 @@ def chart_hover_checks():
             tab._hover(i, cx, cy)
             check(c.find_withtag("hover") == before, "a showing bubble was redrawn")
             tab._unhover()
+        tab._pool.shutdown(wait=True)
     finally:
         root.destroy()
 

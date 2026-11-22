@@ -513,3 +513,20 @@ def describe(found):
     exact = ", exact" if found.get("exact") else ""
     return (f"Cardmarket{f' ({when}{exact})' if when else ''}{what}: " + " · ".join(bits)
             + (f"   [{'; '.join(caveat)}]" if caveat else ""))
+
+
+SITE = {"pokemon": "Pokemon", "yugioh": "YuGiOh"}
+
+
+def product_url(card, product_id=None):
+    """
+    The card's page on Cardmarket: by product id when the exact print is
+    known (Cardmarket's own idProduct link), otherwise a search for its name
+    — the English name for a Japanese card, the set code too for Yu-Gi-Oh.
+    """
+    game = SITE.get(getattr(card, "game", ""), "Pokemon")
+    if product_id:
+        return f"https://www.cardmarket.com/en/{game}/Products?idProduct={int(product_id)}"
+    name = re.sub(r"\s*\(.*?\)\s*$", "", getattr(card, "name", "") or "")
+    return (f"https://www.cardmarket.com/en/{game}/Products/Search?"
+            + urllib.parse.urlencode({"searchString": name}))

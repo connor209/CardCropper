@@ -268,6 +268,12 @@ class LookupTab(ttk.Frame):
                        command=self.open_sold)
         b.pack(side="left")
         ui.tip(b, "Open eBay.co.uk sold and completed listings for this card in your browser.")
+        b = ttk.Button(btns, text="Open on Cardmarket ↗", style="Ghost.TButton",
+                       command=self.open_cardmarket)
+        b.pack(side="left", padx=(4, 0))
+        ui.tip(b, "The card on Cardmarket: the exact print's product page when the price "
+                  "line says 'exact' (the print your search names), otherwise a Cardmarket "
+                  "search for the card.")
         b = ttk.Button(btns, text="Open catalogue page ↗", style="Ghost.TButton",
                        command=self.open_catalogue)
         b.pack(side="left", padx=(4, 0))
@@ -556,16 +562,30 @@ class LookupTab(ttk.Frame):
                 found = cardmarket.price_for(card, printing=printing)
                 text = cardmarket.describe(found) or \
                     "Cardmarket: no match for this card in today's price guide."
+                product = (found or {}).get("id") if (found or {}).get("exact") else None
             except Exception as exc:                          # noqa: BLE001
                 text = f"Cardmarket: price guide unavailable ({type(exc).__name__})."
-            self.events.put(("cardmarket", (card.id, text)))
+                product = None
+            self.events.put(("cardmarket", (card.id, text, product)))
         threading.Thread(target=go, daemon=True).start()
 
     def _on_cardmarket(self, payload):
-        card_id, text = payload
+        card_id, text, product = payload
+        self._cm_products = getattr(self, "_cm_products", {})
+        self._cm_products[card_id] = product
         cur, lines = getattr(self, "_price_lines", (None, []))
         if cur == card_id:
             self.prices_lbl.configure(text="\n".join(lines + [text]))
+
+    def open_cardmarket(self):
+        """The card's Cardmarket page — by product id when known, else a search."""
+        from . import cardmarket
+        card = self.current
+        if card is None:
+            self._say("Search for a card first.", "warn")
+            return
+        product = getattr(self, "_cm_products", {}).get(card.id)
+        webbrowser.open(cardmarket.product_url(card, product))
 
     def match_scan(self, path):
         """Compare the scan at `path` with every current result's catalogue image."""
