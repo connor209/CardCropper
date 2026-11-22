@@ -152,7 +152,8 @@ class OpsTab(ttk.Frame):
             with contextlib.redirect_stdout(w), contextlib.redirect_stderr(w):
                 try:
                     code = cli_ops.main(cmd, argv)
-                    print(f"[done{'' if not code else f', exit {code}'}]")
+                    print("[done]" if not code else
+                          "[done — some cards need attention: see the list above]")
                 except SystemExit as e:
                     print(f"[stopped: {e}]")
                 except Exception:                              # noqa: BLE001

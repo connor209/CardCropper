@@ -70,6 +70,14 @@ def _load_job(path):
 # ---------------------------------------------------------------- batch
 
 
+def _progress(what, i, n):
+    """One line rewritten in a terminal; every tenth card, and the last, elsewhere."""
+    if sys.stdout.isatty():
+        print(f"\r  {what} {i}/{n}", end="", flush=True)
+    elif i == n or i % 10 == 0:
+        print(f"  {what} {i}/{n}", flush=True)
+
+
 def batch_cmd(argv):
     p = paths()
     ap = argparse.ArgumentParser(prog="cardcropper --cli batch",
@@ -123,8 +131,9 @@ def batch_cmd(argv):
             continue
         rows = checks.check_batch(
             b, reference, calibration, a.background,
-            progress=lambda i, n, r: print(f"\r  checking {i}/{n}", end="", flush=True))
-        print()
+            progress=lambda i, n, r: _progress("checking", i, n))
+        if sys.stdout.isatty():
+            print()
         path = checks.write_checks(rows, checks.checks_path(b))
         print(f"  {checks.summary(rows)} -> {path}")
         for r in rows:
@@ -234,12 +243,10 @@ def price_cmd(argv):
 
     def fetch(cards):
         return pricing.batch_comps(cards, a.base, fresh=a.fresh,
-                                   progress=lambda d, n: print(f"\r  comps {d}/{n}", end="",
-                                                               flush=True))
+                                   progress=lambda d, n: print(f"  comps {d}/{n}", flush=True))
 
     priced = report.price_job(job, game, evidence, reg, grades, batch=name, fetch=fetch,
                               reuse_register=not a.no_register)
-    print()
     reg.close()
     tag = name or job_id or "job"
     report.write_pricing(priced, os.path.join(out, f"pricing-{tag}.csv"))
