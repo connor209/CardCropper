@@ -70,6 +70,13 @@ class CardUploaderTab(ttk.Frame):
         self.job_box.bind("<<ComboboxSelected>>", lambda _e: self._picked_job())
         ui.tip(self.job_box, "Every CardUploader job saved under the Batches folder, newest "
                              "first. Fetch more with CardUploader jobs….")
+        self.grade_btn = ttk.Button(bar, text="Grade by eye…", style="Accent.TButton",
+                                    command=lambda: self.grade_by_eye())
+        self.grade_btn.grid(row=0, column=5, padx=(6, 0))
+        ui.tip(self.grade_btn, "Grade this job's cards by eye: front and back large, keys "
+                               "1-6, saved to grades-<job>.csv beside the job and to the "
+                               "grade library. Starts at the selected card, or the first "
+                               "not graded.")
         b = ttk.Button(bar, text="CardUploader jobs…", command=self._fetch)
         b.grid(row=0, column=2, padx=(6, 0))
         ui.tip(b, "Fetch a job from CardUploader with a token from the extension, or collect "
@@ -163,7 +170,9 @@ class CardUploaderTab(ttk.Frame):
                 ("Card lookup", self._to_lookup, "Printings, Cardmarket and a scan match.",
                  "TButton"),
                 ("eBay ↗", self._ebay, "eBay's own UK sold search for it.",
-                 "TButton"))):
+                 "TButton"),
+                ("Grade it…", lambda: self.grade_by_eye((self._sel() or {}).get("sku")),
+                 "Grade by eye, starting at this card.", "TButton"))):
             b = ttk.Button(act, text=text, command=cmd, style=style)
             b.grid(row=i // 2, column=i % 2, sticky="ew", padx=(0, 6), pady=(0, 6))
             ui.tip(b, tiptext)
@@ -313,7 +322,7 @@ class CardUploaderTab(ttk.Frame):
                 continue
             p = self.extras["priced"].get(c.get("sku")) or {}
             tag = ("up",) if diff and diff > 0 else ("down",) if diff and diff < 0 else ()
-            iid = self.tv.insert("", "end", tags=tag, values=(
+            iid = self.tv.insert("", "end", iid=f"r{i}", tags=tag, values=(
                 c.get("sku", ""), c.get("title", ""), c.get("variant", ""),
                 c.get("condition", ""), _money(c.get("price")), c.get("status", ""), grade,
                 _money(p.get("suggested")), f"{diff:+.2f}" if diff else ""))
@@ -380,6 +389,28 @@ class CardUploaderTab(ttk.Frame):
         photo = ImageTk.PhotoImage(img)
         self.photos = [p for p in self.photos[-1:]] + [photo]
         canvas.create_image(THUMB[0] / 2, THUMB[1] / 2, image=photo)
+
+    def grade_by_eye(self, sku=None):
+        if not self.job:
+            self.head.configure(text="Pick a job first.")
+            return
+        from .eye_grade import EyeGrader
+        if sku is None:
+            sel = self._sel()
+            sku = sel.get("sku") if sel else None
+        EyeGrader(self.winfo_toplevel(), self.job_path, self.job, start_sku=sku,
+                  on_change=self._regraded)
+
+    def _regraded(self):
+        """A grade was keyed in the grading window: show it here too."""
+        if not self.job or not self.job_path:
+            return
+        keep = self.tv.selection()
+        self.extras = self._extras(self.job_path, self.job)
+        self._summary()
+        self._fill()
+        if keep and self.tv.exists(keep[0]):
+            self.tv.selection_set(keep[0])
 
     def _to_market(self):
         c = self._sel()

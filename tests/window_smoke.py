@@ -482,6 +482,41 @@ def cu_tab_checks(work):
         tab.tv.selection_set(tab.tv.get_children()[0])
         tab._to_market()
         check(went == ["Card 3"], f"Sold prices did not send the title: {went}")
+
+        # Grade by eye: keys save and move on; a regrade replaces; undo; crease rule.
+        from cardcropper import eye_grade, library
+        folders.save_settings(grader="Tester")
+        tab.find_var.set("")
+        tab._fill()
+        win = eye_grade.EyeGrader(root, tab.job_path, tab.job, start_sku="KU2",
+                                  on_change=tab._regraded)
+        root.update()
+        check(win._card()["sku"] == "KU2", "did not start at the chosen card")
+        win.note_var.set("light crease top left")
+        win.grade("NM")
+        check("KU2" not in win.done and "crease" in str(win.status.cget("text")),
+              "an NM with a crease in its note was saved")
+        win.note_var.set("")
+        win.grade("LP")
+        check(win.done["KU2"][0] == "LP" and win._card()["sku"] == "KU3",
+              "grade not saved, or did not move to the next ungraded card")
+        win.go(1)
+        win.grade("MP")                                   # a regrade of KU2
+        gpath = eye_grade.grades_file(tab.job_path, tab.job)
+        rows = [r for r in grading.read_grades(gpath) if r["sku"] == "KU2"]
+        check(len(rows) == 1 and rows[0]["grade"] == "MP" and rows[0]["grader"] == "Tester",
+              f"a regrade did not replace the earlier one: {rows}")
+        root.update()
+        vals = {tab.tv.set(i, "sku"): tab.tv.set(i, "grade") for i in tab.tv.get_children()}
+        check(vals.get("KU2") == "MP", f"the CardUploader page did not pick the grade up: {vals}")
+        win.focus_set()
+        win.undo()
+        rows = [r for r in grading.read_grades(gpath) if r["sku"] == "KU2"]
+        check(len(rows) == 1 and rows[0]["grade"] == "LP", f"undo did not put LP back: {rows}")
+        library.flush()
+        check(any(c["sku"] == "KU2" and c["standing"] == "LP" for c in library.cards()),
+              "an eye grade did not reach the grade library")
+        win.destroy()
     finally:
         root.destroy()
 

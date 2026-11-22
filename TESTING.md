@@ -37,6 +37,9 @@ and reload the Chrome extension (`chrome://extensions` → reload).
       and Δ are filled where you have them; the filters and Find work.
 - [ ] Pick a card: your scan and the catalogue picture load; Sold prices /
       Card lookup / eBay ↗ go to the right card.
+- [ ] **Grade by eye…** on a fetched job: pictures load (does CardUploader give a
+      back image?), keys 1-6 save and move on, zoom, undo, regrade; the Graded
+      column and box update.
 - [ ] Open a batch from a different place (e.g. copy a batch folder
       elsewhere): its scans still show.
 

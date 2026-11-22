@@ -33,7 +33,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from . import audits, batches, checks, conditioning, grading, imaging, wear
+from . import audits, batches, checks, conditioning, folders, grading, imaging, wear
 
 #: Faces whose machine counts are put in the wear boxes. Only the back: a back
 #: is one even print on every card, so a white nick stands out from it. On a
@@ -137,7 +137,7 @@ class GradeTab(ttk.Frame):
         from . import ui
         ui.recent_menu(bar, "grade", self.load).grid(row=0, column=9, padx=(12, 0))
         ttk.Label(bar, text="Grader").grid(row=0, column=3, padx=(12, 4))
-        self.grader_var = tk.StringVar(value="Connor")
+        self.grader_var = tk.StringVar(value=folders.load_settings().get("grader") or "Connor")
         ttk.Entry(bar, textvariable=self.grader_var, width=10).grid(row=0, column=4)
         ttk.Label(bar, text="Pass").grid(row=0, column=5, padx=(12, 4))
         self.pass_var = tk.StringVar(value="1")

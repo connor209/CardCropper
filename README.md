@@ -205,6 +205,7 @@ report and how far it is from the listed price. Boxes on top total the cards,
 listed value, grades, cards to reprice and variant decisions; filter to
 listed, price-to-move or not-graded cards. Pick a card for your scan beside
 the catalogue picture, and **Sold prices**, **Card lookup** or **eBay ↗**.
+**Grade by eye…** grades the job a card at a time: front and back large (the batch's own scans when its manifest is beside the job, otherwise CardUploader's images; click to zoom), keys **1-6** for NM/LP/MP/HP/DMG/HOLD save and move to the next ungraded card, an optional flaw note, ← → to move, Ctrl+Z to undo. Grades go to `grades-<job>.csv` beside the job — so Batch & price prices at that condition and the change file carries it — and to the grade library. Keying a card again replaces its earlier eye grade; a note mentioning a crease is refused above HP. The grader name is asked once per computer.
 Jobs come from every `job-<batch>.json` under the Batches folder;
 **CardUploader jobs…** fetches new ones. It is read-only: changes still go
 through the change file and the extension's diff and Apply.
