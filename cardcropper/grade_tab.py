@@ -8,7 +8,8 @@ same game beside it. Stepping onto a panel marks it opened (`looked`).
 
 Keys: 1-6 or N / L / M / H / D / X for NM / LP / MP / HP / DMG / HOLD.
 Right / Left (or Space / Backspace) step through the panels. The whole card
-is there too: F the full front, B the full back, C the crop sheets (press
+is there too: S front and back side by side, F the full front, B the full
+back, C the crop sheets (press
 again for the back's), P back to the panels. Full views fit the window by
 default; pick a zoom to see them at 1:1 or larger. The wear counts
 from the crop checks are pre-filled and can be corrected.
@@ -138,8 +139,8 @@ class GradeTab(ttk.Frame):
         views = ttk.Frame(view)
         views.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
         self.view_var = tk.StringVar(value="panels")
-        for value, text in (("panels", "Panels (P)"), ("front", "Front (F)"),
-                            ("back", "Back (B)"), ("front-crops", "Front crops (C)"),
+        for value, text in (("panels", "Panels (P)"), ("both", "Front + back (S)"),
+                            ("front", "Front (F)"), ("back", "Back (B)"), ("front-crops", "Front crops (C)"),
                             ("back-crops", "Back crops (C)")):
             ttk.Radiobutton(views, text=text, value=value, variable=self.view_var,
                             command=lambda: self.set_view(self.view_var.get()))\
@@ -419,10 +420,13 @@ class GradeTab(ttk.Frame):
             return
         self.photos = []
         view = self.view
-        names = {"front": "FRONT — whole card", "back": "BACK — whole card",
+        names = {"both": "FRONT and BACK — whole card",
+                 "front": "FRONT — whole card", "back": "BACK — whole card",
                  "front-crops": "FRONT — crop sheet", "back-crops": "BACK — crop sheet"}
         self.panel_lbl.configure(text=names[view])
-        if view in ("front", "back"):
+        if view == "both":
+            path, img = self._both()
+        elif view in ("front", "back"):
             path = self._paths(self.index)[view]
             got = self.cache.get(path) if path else None
             img = got.get("_full") if isinstance(got, dict) else got
@@ -440,7 +444,7 @@ class GradeTab(ttk.Frame):
             self.strip.configure(text=f"could not read: {img}")
         else:
             self._draw(self.canvas, img)
-            self.strip.configure(text=os.path.basename(path))
+            self.strip.configure(text="  +  ".join(os.path.basename(p) for p in path.split("\n")))
         face = "back" if view.startswith("back") else "front"
         line = self._line()
         for kind, canvas in (("clean", self.ref_clean), ("lp", self.ref_lp)):
@@ -448,6 +452,34 @@ class GradeTab(ttk.Frame):
             got = self.cache.get(ref) if ref else None
             self._draw(canvas, got.get("_full") if isinstance(got, dict) else None, fit=True)
         self.looked_lbl.configure(text=f"panels opened: {len(self.looked)} / 16")
+
+    #: Bed between the two faces in the side-by-side view, in pixels.
+    BOTH_GAP = 24
+
+    def _both(self):
+        """
+        (paths, image) of the front and back side by side at a common height,
+        or a state `_show_full` already knows how to say: None while loading,
+        the error if either failed. paths is the two joined by a newline.
+        """
+        paths = self._paths(self.index)
+        if not paths["front"] or not paths["back"]:
+            return "", None
+        faces = []
+        for face in ("front", "back"):
+            got = self.cache.get(paths[face])
+            if got is None:
+                return paths["front"] + "\n" + paths["back"], None
+            if isinstance(got, Exception):
+                return paths["front"] + "\n" + paths["back"], got
+            faces.append(got["_full"])
+        h = max(f.size[1] for f in faces)
+        faces = [f if f.size[1] == h else
+                 f.resize((round(f.size[0] * h / f.size[1]), h), Image.LANCZOS) for f in faces]
+        both = Image.new("RGB", (sum(f.size[0] for f in faces) + self.BOTH_GAP, h), (18, 18, 18))
+        both.paste(faces[0], (0, 0))
+        both.paste(faces[1], (faces[0].size[0] + self.BOTH_GAP, 0))
+        return paths["front"] + "\n" + paths["back"], both
 
     def _draw(self, canvas, img, fit=False):
         canvas.delete("all")
@@ -538,6 +570,8 @@ class GradeTab(ttk.Frame):
             self.set_view("front")
         elif k == "b":
             self.set_view("back")
+        elif k == "s":
+            self.set_view("both")
         elif k == "c":
             self.set_view("back-crops" if self.view == "front-crops" else "front-crops")
         elif e.char and e.char.lower() in KEYMAP:
