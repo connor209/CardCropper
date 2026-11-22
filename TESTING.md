@@ -32,6 +32,13 @@ and reload the Chrome extension (`chrome://extensions` → reload).
 - [ ] **Fetch job data** saves `job-<batch>.json` beside the right manifest.
 - [ ] Save job data from the extension, then **Collect from Downloads** files it.
 - [ ] An expired token gives a clear message, not a crash.
+- [ ] **CardUploader page** (List & price): every fetched job is in the Job
+      list; the table matches what CardUploader shows; grade, house price
+      and Δ are filled where you have them; the filters and Find work.
+- [ ] Pick a card: your scan and the catalogue picture load; Sold prices /
+      Card lookup / eBay ↗ go to the right card.
+- [ ] Open a batch from a different place (e.g. copy a batch folder
+      elsewhere): its scans still show.
 
 ## 4. Condition a CSV
 - [ ] Prepare a real export; ranking looks sensible (worst first).
