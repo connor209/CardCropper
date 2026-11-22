@@ -222,6 +222,10 @@ def price_cmd(argv):
     ap.add_argument("--register", default=p["register"])
     ap.add_argument("--no-register", action="store_true", help="do not reuse register rows")
     ap.add_argument("--fresh", action="store_true", help="Comp Finder skips its 24h cache")
+    ap.add_argument("--all-languages", action="store_true",
+                    help="count sales Comp Finder leaves out as another language (foreign)")
+    ap.add_argument("--no-decisions", action="store_true",
+                    help="ignore prices chosen on the Market page (Use this price)")
     ap.add_argument("--base", default=pricing.COMP_FINDER)
     a = ap.parse_args(argv)
 
@@ -245,8 +249,16 @@ def price_cmd(argv):
         return pricing.batch_comps(cards, a.base, fresh=a.fresh,
                                    progress=lambda d, n: print(f"  comps {d}/{n}", flush=True))
 
+    from . import market
+    if a.all_languages:
+        print("counting sales in every language")
     priced = report.price_job(job, game, evidence, reg, grades, batch=name, fetch=fetch,
-                              reuse_register=not a.no_register)
+                              reuse_register=not a.no_register,
+                              all_languages=a.all_languages,
+                              decisions=None if a.no_decisions else market.decision_for)
+    chosen = sum(1 for x in priced if x.method == "your price")
+    if chosen:
+        print(f"{chosen} card(s) priced from your Market page choices")
     reg.close()
     tag = name or job_id or "job"
     report.write_pricing(priced, os.path.join(out, f"pricing-{tag}.csv"))

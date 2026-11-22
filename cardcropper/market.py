@@ -332,6 +332,64 @@ def reprice(priced, left_out, variant_text="", counted=(), language="english"):
                               status=priced.status or "ok", put_back=put_back)
 
 
+# ---------------------------------------------------------------- your prices
+
+#: How long a price chosen on the Market page is used by Batch & price.
+DECISION_DAYS = 14
+
+
+def decide(title, condition, price, priced=None, note="", path=None):
+    """
+    "Use this price": keep a person's price for a card at a condition. Batch
+    & price uses it for that card (by title, grade ignored) for DECISION_DAYS.
+    """
+    db = connect(path)
+    try:
+        db.execute("INSERT OR REPLACE INTO decisions (card_key, condition, price, title, "
+                   "n_sales, basis, note, decided_at) VALUES (?,?,?,?,?,?,?,?)",
+                   (pricing.card_key(title), condition.upper(), float(price), title,
+                    getattr(priced, "n_sales", None), getattr(priced, "basis", None), note,
+                    time.time()))
+        db.commit()
+    finally:
+        db.close()
+
+
+def decision_for(title, condition, path=None, now=None):
+    """The recent chosen price for a card, as a dict, or None."""
+    cutoff = (now or time.time()) - DECISION_DAYS * 86400
+    db = connect(path)
+    try:
+        r = db.execute("SELECT * FROM decisions WHERE card_key=? AND condition=? "
+                       "AND decided_at>=?", (pricing.card_key(title), condition.upper(),
+                                             cutoff)).fetchone()
+    finally:
+        db.close()
+    if r is None:
+        return None
+    r = dict(r)
+    r["when"] = ago(r["decided_at"])
+    return r
+
+
+def decisions(path=None):
+    db = connect(path)
+    try:
+        return [dict(r) for r in db.execute("SELECT * FROM decisions ORDER BY decided_at DESC")]
+    finally:
+        db.close()
+
+
+def undecide(title, condition, path=None):
+    db = connect(path)
+    try:
+        db.execute("DELETE FROM decisions WHERE card_key=? AND condition=?",
+                   (pricing.card_key(title), condition.upper()))
+        db.commit()
+    finally:
+        db.close()
+
+
 # ---------------------------------------------------------------- history
 
 
@@ -352,6 +410,10 @@ def connect(path=None):
         variant TEXT, source TEXT, searched_at REAL NOT NULL, n_kept INTEGER,
         n_found INTEGER, suggested REAL, query TEXT, evidence TEXT)""")
     db.execute("CREATE INDEX IF NOT EXISTS searches_title ON searches(title)")
+    db.execute("""CREATE TABLE IF NOT EXISTS decisions (
+        card_key TEXT NOT NULL, condition TEXT NOT NULL, price REAL NOT NULL, title TEXT,
+        n_sales INTEGER, basis REAL, note TEXT, decided_at REAL NOT NULL,
+        PRIMARY KEY (card_key, condition))""")
     cols = {r[1] for r in db.execute("PRAGMA table_info(searches)")}
     if "language" not in cols:       # added after the first release of the table
         db.execute("ALTER TABLE searches ADD COLUMN language TEXT")

@@ -94,6 +94,9 @@ class OpsTab(ttk.Frame):
         self.fresh_var = tk.BooleanVar()
         ttk.Checkbutton(act, text="Fresh comps (skip Comp Finder's 24h cache)",
                         variable=self.fresh_var).pack(side="left")
+        self.all_lang_var = tk.BooleanVar()
+        ttk.Checkbutton(act, text="Count every language",
+                        variable=self.all_lang_var).pack(side="left", padx=(8, 0))
         ttk.Button(act, text="Price & report", command=self.price).pack(side="left", padx=8)
         ttk.Button(act, text="Report again", command=self.report).pack(side="left")
         ttk.Button(act, text="Write change file", command=self.changes).pack(side="left", padx=8)
@@ -205,7 +208,8 @@ class OpsTab(ttk.Frame):
     def price(self):
         argv = self._job_args()
         if argv:
-            self._run("price", argv + (["--fresh"] if self.fresh_var.get() else []))
+            self._run("price", argv + (["--fresh"] if self.fresh_var.get() else [])
+                      + (["--all-languages"] if self.all_lang_var.get() else []))
 
     def report(self):
         argv = self._job_args()

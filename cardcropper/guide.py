@@ -364,6 +364,9 @@ TIPS = {
         "Variant queue (optional)": "The Variants tab's decisions, to include the switches.",
         "Fresh comps (skip Comp Finder's 24h cache)": "Search eBay again instead of using "
                                                       "sales Comp Finder found in the last day.",
+        "Count every language": "Also count the sales Comp Finder leaves out as another "
+                                "language (foreign) — for Japanese and other non-English "
+                                "batches. Graded slabs, other printings and lots stay out.",
         "Price & report": "Price every card from sold comps under the house rules, and write "
                           "the run report.",
         "Report again": "Rewrite the report — after filling in Terapeak checks.",

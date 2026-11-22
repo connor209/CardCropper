@@ -218,9 +218,21 @@ class PricesTab(ttk.Frame):
         right = ttk.Frame(pane, padding=(10, 0, 0, 0))
         right.columnconfigure(0, weight=1)
         right.rowconfigure(3, weight=1)
-        self.card_title = ttk.Label(right, style="Heading.TLabel", text="Search for a card",
-                                    wraplength=760, justify="left")
+        head = ttk.Frame(right)
+        head.grid(row=0, column=0, sticky="ew")
+        head.columnconfigure(0, weight=1)
+        self.card_title = ttk.Label(head, style="Heading.TLabel", text="Search for a card",
+                                    wraplength=620, justify="left")
         self.card_title.grid(row=0, column=0, sticky="w")
+        self.chosen_lbl = ttk.Label(head, style="Ok.TLabel")
+        self.chosen_lbl.grid(row=1, column=0, sticky="w")
+        self.use_btn = ttk.Button(head, text="Use this price…", command=self.use_price,
+                                  state="disabled")
+        self.use_btn.grid(row=0, column=1, rowspan=2, sticky="e")
+        ui.tip(self.use_btn, "Keep this price for this card at this condition. Batch & price "
+                             "uses it for that card for the next "
+                             f"{market.DECISION_DAYS} days instead of working one out — "
+                             "labelled 'your price' in the report.")
 
         stats = ttk.Frame(right)
         stats.grid(row=1, column=0, sticky="ew", pady=(6, 6))
@@ -796,6 +808,8 @@ class PricesTab(ttk.Frame):
             exp, _ = self.expected.get(self.priced[self.current].sku, (None, True))
             self.cards.item(str(self.current), values=self._card_values(self.current, exp))
         self.card_title.configure(text=p.title + (f"   ·   {p.condition}" if p.condition else ""))
+        self.use_btn.configure(state="normal")
+        self._show_chosen(p)
         f = market.figures(p)
         price_note = f"{p.decision}: {p.reason}" if p.decision else ""
         if whatif and base.suggested != p.suggested:
@@ -1199,6 +1213,51 @@ class PricesTab(ttk.Frame):
                 self.sales.selection_set(str(i))
                 self.sales.see(str(i))
                 break
+
+    def _show_chosen(self, p):
+        try:
+            d = market.decision_for(p.title, p.condition)
+        except Exception:                                     # noqa: BLE001
+            d = None
+        self.chosen_lbl.configure(
+            text=f"Your price: {_money(d['price'])}, chosen {d['when']} — Batch & price "
+                 "uses it" if d else "")
+
+    def use_price(self):
+        """Keep a price for the card on screen — this one, or one typed in."""
+        if self.current is None:
+            return
+        p = self._shown()
+        from tkinter import simpledialog
+        current = market.decision_for(p.title, p.condition)
+        start = current["price"] if current else p.suggested
+        text = simpledialog.askstring(
+            "Use this price",
+            f"{p.title}  ·  {p.condition}\n\nPrice to use (£). Batch & price will use it for "
+            f"this card for {market.DECISION_DAYS} days.\nLeave empty to stop using a chosen "
+            "price.", initialvalue=f"{start:.2f}" if start else "", parent=self)
+        if text is None:
+            return
+        text = text.strip().lstrip("£")
+        if not text:
+            market.undecide(p.title, p.condition)
+            self.status.configure(text="No chosen price for this card now.",
+                                  foreground=ui.C["muted"])
+        else:
+            try:
+                price = round(float(text), 2)
+                if price <= 0:
+                    raise ValueError
+            except ValueError:
+                self.status.configure(text=f"“{text}” is not a price.", foreground=ui.C["bad"])
+                return
+            note = "what-if" if self._whatif() else ""
+            if self._lang() == "all":
+                note = (note + ", " if note else "") + "all languages"
+            market.decide(p.title, p.condition, price, p, note=note)
+            self.status.configure(text=f"Using {_money(price)} for {p.title} ({p.condition}).",
+                                  foreground=ui.C["ok"])
+        self._show_chosen(p)
 
     def reset_whatif(self):
         if self.current is not None:

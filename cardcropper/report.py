@@ -27,8 +27,13 @@ def _num(v):
         return None
 
 
+#: Register method for prices made counting every language — never reused by
+#: an English-only run, which only reuses pricing.REGISTER_METHOD rows.
+ALL_LANGUAGES_METHOD = "ebay-sold-comps-all-languages"
+
+
 def price_job(job, game, evidence=None, register=None, grades=None, batch="",
-              fetch=None, reuse_register=True):
+              fetch=None, reuse_register=True, all_languages=False, decisions=None):
     """
     Price every card in a CardUploader job.
 
@@ -36,14 +41,36 @@ def price_job(job, game, evidence=None, register=None, grades=None, batch="",
     missing cards use the job's own condition. `evidence` is batch_comps'
     {id: result}; when None, `fetch(cards)` is called for the cards the
     register cannot answer. Returns a list of pricing.Priced.
+
+    `all_languages` counts the sales Comp Finder leaves out as another
+    language. Register rows were made from English sales, so they are not
+    reused for such a run, and its own prices go in under a method of their
+    own that an English run never reuses.
+
+    `decisions(title, condition)` returns a price a person chose on the
+    Market page ("Use this price") for that card, or None; such a price is
+    used as it is, and says so.
     """
+    from . import market
     cards = variants.job_cards(job)
     grades = grades or {}
     out, need = [], []
     for c in cards:
         sku = c.get("sku", "")
         cond = (grades.get(sku) or c.get("condition") or "NM").upper()
-        hit = register.reusable(c.get("title", ""), cond) if (register and reuse_register) else None
+        chosen = decisions(c.get("title", ""), cond) if decisions else None
+        if chosen:
+            p = pricing.Priced(sku, c.get("title", ""), game, cond, current=_num(c.get("price")),
+                               n_sales=chosen.get("n_sales") or 0, suggested=chosen["price"],
+                               lp_price=chosen["price"], method="your price",
+                               basis=chosen.get("basis"))
+            p.decision = "apply"
+            p.reason = (f"your price from the Market page, {chosen.get('when', 'recently')}"
+                        + (f" — {chosen['note']}" if chosen.get("note") else ""))
+            out.append(p)
+            continue
+        use_register = register and reuse_register and not all_languages
+        hit = register.reusable(c.get("title", ""), cond) if use_register else None
         if hit:
             p = pricing.Priced(sku, c.get("title", ""), game, cond, current=_num(c.get("price")),
                                n_sales=hit["n_sales"] or 0, suggested=hit["price"],
@@ -68,9 +95,12 @@ def price_job(job, game, evidence=None, register=None, grades=None, batch="",
         status = r.get("status", "ok") if r else "error"
         p = pricing.price_card(c.get("sku"), c.get("title", ""), r.get("sold"), game, cond,
                                current=_num(c.get("price")), variant_text=variant,
-                               status=status)
+                               status=status,
+                               put_back=market.language_reasons(r.get("sold"))
+                               if all_languages else ())
         if register and p.suggested is not None and status == "ok":
-            register.record(p, batch=batch)
+            register.record(p, batch=batch, method=ALL_LANGUAGES_METHOD if all_languages
+                            else pricing.REGISTER_METHOD)
         out[i] = p
     return out
 
@@ -86,7 +116,8 @@ def write_pricing(priced, path):
                         "n_sales": p.n_sales, "band": pricing.band(p.n_sales),
                         "last_sold": p.last_sold, "decision": p.decision,
                         "reason": p.reason, "flags": " ".join(p.flags),
-                        "source": "register" if p.method == "register" else "comps",
+                        "source": {"register": "register", "your price": "your Market choice"}.get(
+                            p.method, "comps"),
                         "n_excluded": len(p.excluded)})
     return path
 

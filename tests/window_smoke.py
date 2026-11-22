@@ -165,6 +165,27 @@ def market_checks(work):
     check(market.language_reasons(mixed) == {"foreign", "not_english"},
           f"language reasons wrong: {market.language_reasons(mixed)}")
 
+    # Use this price: Batch & price picks it up for that card and condition only.
+    from cardcropper import report
+    market.decide("Lugia 78/124 Fates Collide Pokemon NM", "NM", 6.49, p, note="checked")
+    check(market.decision_for("Lugia 78/124 Fates Collide Pokemon LP", "NM")["price"] == 6.49,
+          "a chosen price should follow the card whatever grade its title ends with")
+    check(market.decision_for("Lugia 78/124 Fates Collide", "LP") is None,
+          "a chosen price is for one condition")
+    job = {"cards": [{"sku": "KA1", "title": "Lugia 78/124 Fates Collide Pokemon NM",
+                      "condition": "NM", "price": 4.49},
+                     {"sku": "KA2", "title": "Aron 44/100 Crystal Guardians Pokemon NM",
+                      "condition": "NM"}]}
+    ev = {"KA2": {"status": "ok", "sold": [dict(sold[0], excluded_reason="foreign")] * 5}}
+    got = report.price_job(job, "pokemon", evidence=ev, decisions=market.decision_for)
+    check(got[0].method == "your price" and got[0].suggested == 6.49
+          and got[0].decision == "apply", f"chosen price not used: {got[0]}")
+    check(got[1].n_sales == 0, "English-only batch counted foreign sales")
+    got = report.price_job(job, "pokemon", evidence=ev, all_languages=True)
+    check(got[1].n_sales == 5, f"all-languages batch did not count them: {got[1].n_sales}")
+    market.undecide("Lugia 78/124 Fates Collide", "NM")
+    check(market.decision_for("Lugia 78/124 Fates Collide", "NM") is None, "undecide failed")
+
     sid = market.save_search("Lugia 78/124", {"sold": sold, "status": "ok"}, p)
     again, ev, row = market.load_search(sid)
     check(row["language"] == "english", "a search's language was not kept")
