@@ -285,6 +285,43 @@ def split_checks(work, scans):
     check(1.25 < thumb.size[1] / thumb.size[0] < 1.55, f"thumbnail not cropped: {thumb.size}")
 
 
+def side_band_checks():
+    """
+    A dim band down the scan's left or right edge, top to bottom, is
+    background. On KW31 and KW33 (Japanese backs, 22 Nov 2026) one carried the
+    card's box out to the edge of the scan, and the right-hand corner crops
+    showed bed — the line test could not see it, having no column beyond it to
+    compare with. A card lying against the scan's edge must still be left whole.
+    """
+    import numpy as np
+    from cardcropper import checks
+    # As on KW31: the band 35-60px clear of the card and running off the
+    # scan's edge. Further away, the gap of bed already kept it out.
+    for side, width, level in (("right", 24, 30), ("right", 12, 40), ("right", 6, 25),
+                               ("left", 16, 35)):
+        gap = 40
+        scan_w = 200 + CARD_W + gap + width
+        a = np.zeros((1800, scan_w, 3), np.uint8)
+        a[200:1600, 200:1200] = np.asarray(make_card(False))
+        if side == "right":
+            a[:, scan_w - width:] = level
+        else:
+            a = a[:, 200 - gap - width:]
+            a[:, :width] = level
+        x0 = side
+        exact, padded, _, _ = imaging.straighten(Image.fromarray(a))
+        check(abs(exact.size[0] - CARD_W) <= 4 and abs(exact.size[1] - CARD_H) <= 4,
+              f"a band x{x0}+{width} at {level} widened the card to {exact.size}")
+        check(not checks.bed_in_corners(exact),
+              f"a band x{x0}+{width} put bed in the corners")
+    # A navy back against the right edge of the scan, not full height: card.
+    a = np.zeros((1800, 1400, 3), np.uint8)
+    a[200:1600, 400:1400] = np.asarray(make_card(False))
+    exact, _, _, _ = imaging.straighten(Image.fromarray(a))
+    check(abs(exact.size[0] - CARD_W) <= 4,
+          f"a card against the scan's edge was trimmed to {exact.size}")
+
+
 def updater_checks(work):
     """
     The self-update. What it must never do: install a download that is not the
@@ -1463,6 +1500,7 @@ def main():
               "a failed card took an earlier card's files with it")
 
         split_checks(work, scans)
+        side_band_checks()
         updater_checks(work)
 
         import cardcropper.gui                   # noqa: F401  (tkinter present?)

@@ -395,11 +395,19 @@ def _ridges(level):
     return np.clip(level - np.median(windows, axis=1), 0, None)
 
 
-def _backing(level, base):
+#: The narrowest dim band down the scan's side that is taken for background.
+#: A band of rows has to be long (BED_RING of the scan) to be backing, but a
+#: band of columns is already required to run the full height of the scan, top
+#: border to bottom border, which no card does — so a few columns is enough.
+SIDE_BAND_MIN = 3
+
+
+def _backing(level, base, min_len=None):
     """
     How far rows read above the bed where they are the feeder's backing: a
     stretch running in from one end of the scan, reading above the bed but
-    too dim to be card. Zero everywhere else.
+    too dim to be card. Zero everywhere else. `min_len` is the shortest such
+    stretch taken (default: BED_RING of the scan).
     """
     excess = level - base
     out = np.zeros(len(level))
@@ -415,7 +423,8 @@ def _backing(level, base):
         stop = len(run) if within[start:].all() else start + int(np.argmin(within[start:]))
         # Half the scan at most: past that it is not backing trailing a card,
         # it is what the card is lying on, and the bed level already has it.
-        if stop - start > slack and stop <= len(run) // 2:
+        if stop - start > (slack if min_len is None else min_len) \
+                and stop <= len(run) // 2:
             out[rows][start:stop] = run[start:stop]
     return out
 
@@ -445,10 +454,18 @@ def _clean_value(value):
     rows = np.minimum(np.median(v[:, :rx], axis=1), np.median(v[:, -rx:], axis=1))
     base = min(float(np.median(side)) for side in _border(value))
     backing = _backing(rows, base)
+    # The same thing turned on its side: a dim band down the scan's left or
+    # right edge, top to bottom. A sheet feeder can show one down the side of
+    # every page, and the line test below cannot see it — it looks for a
+    # column brighter than the columns either side, and at the scan's edge
+    # there is no other side. Left in, it carried the card's box out to the
+    # edge of the scan and the right-hand corner crops showed bed (KW31 and
+    # KW33, Japanese backs, 22 Nov 2026).
+    side = _backing(columns, base, min_len=SIDE_BAND_MIN)
     lines = _runs(_ridges(columns) >= BACKING_MIN)
-    if not lines and not backing.any():
+    if not lines and not backing.any() and not side.any():
         return value
-    clean = v - backing[:, None].astype(np.int16)
+    clean = v - backing[:, None].astype(np.int16) - side[None, :].astype(np.int16)
     # A line is FILLED from the columns either side of it rather than having
     # its strength subtracted. How much a line adds depends on what is under
     # it — it hardly shows through a bright card's glow — and subtracting the
