@@ -177,6 +177,27 @@ straight to a card's sold prices or catalogue entry.
 | **2 · Grade** | **Condition a CSV** (rank an export by wear, and grade it beside the ranking), **Grade** (card by card, panel by panel), **Grade library** (every hand grade, and the golden sets) |
 | **3 · List & price** | **Variants**, **Card lookup** (catalogue, printings, scan matching), **Market** (eBay sold listings), **Batch & price** |
 
+**Today** (on Home) lists what is waiting, each line a button to the page it
+is done on: batches by their next step, Terapeak checks, NM cards priced £15+
+to check in hand, job files the extension left in Downloads, watched cards
+that moved, a blind check due, a Comp Finder login to renew, a freeze report
+to send. It is worked out afresh each time from the same files the pages use.
+
+**Terapeak checks** gathers every card a price report sent to a person, from
+every `terapeak-<job>.csv` under the batches folder. For each: why, the price
+it has and the price the rules suggested, **Open Terapeak ↗** (UK, sold, 90
+days, already searched), **Sales in Market**, then type the price and Enter —
+or **Keep current**. It is written into the job's file exactly as typing into
+the CSV would; when a job has none left, **Report again** reruns its report.
+
+**CardUploader jobs** (Tools menu, or the Batches page): in the extension,
+**Copy token for CardCropper**, paste it here, **List my jobs**, and **Fetch
+job data** saves `job-<batch>.json` beside the batch's manifest — read-only;
+the token lasts about an hour and is kept in memory only. **Collect from
+Downloads** files the job data and history the extension saved, with no token.
+The saved history fills Batch & price's history box, so a batch code is never
+reused.
+
 **Batches** (under Home) lists every batch under a folder you choose, with a
 column per stage — batched (and crop-check HOLDs), graded, variants decided,
 priced (and whether the run report is READY), change file — read off the

@@ -22,6 +22,11 @@ CardUploader page, exactly as the batch page would make it.
   Variants tab, `--cli price` and `--cli changes` read it.
 - **Save batch history** writes `carduploader-history.json` (`GET /jobs/history`).
   `--cli batch --history` reads it so a batch code is never reused.
+- **Copy token for CardCropper** copies this tab's session token, for
+  CardCropper's **CardUploader jobs** window (Tools menu), which lists your jobs
+  and fetches a job's data straight into its batch folder — read-only. The
+  token lasts about an hour; CardCropper keeps it in memory only. (Or leave the
+  saved JSON in Downloads: CardCropper's **Collect from Downloads** files it.)
 - **Apply a change file** (`changes-<batch>.json` from CardCropper):
   1. The job is read fresh, and each change is checked against it. A change
      whose old value no longer matches CardUploader, an unknown SKU, a

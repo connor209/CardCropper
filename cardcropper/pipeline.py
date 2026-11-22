@@ -23,6 +23,7 @@ simply back a step. `scan(root)` finds every batch under a folder.
 import csv
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
 #: How deep under the chosen folder to look. Batch folders sit a level or
@@ -55,12 +56,35 @@ def _read_csv(path):
         return []
 
 
+#: Parsed files, by (path, size, mtime): a scan runs every time Home or the
+#: Batches page is shown, and parsing the same JSON again each time held the
+#: interpreter long enough to stall the window.
+_PARSED = {}
+
+
+def _key(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (path, st.st_size, st.st_mtime)
+
+
 def _read_json(path):
+    k = _key(path)
+    if k is None:
+        return None
+    if k in _PARSED:
+        return _PARSED[k]
     try:
         with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
+            data = json.load(fh)
     except (OSError, ValueError):
-        return None
+        data = None
+    if len(_PARSED) > 400:
+        _PARSED.clear()
+    _PARSED[k] = data
+    return data
 
 
 def _walk(root):
@@ -73,16 +97,34 @@ def _walk(root):
         yield dirpath, files
 
 
+_NAMES = {}
+_JOB_NAME = re.compile(rb'"jobName"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
 def _job_name(path):
-    """A saved CardUploader job's name, or '' when the JSON is not one."""
-    if os.path.getsize(path) > 50_000_000:
+    """
+    A saved CardUploader job's name, or '' when the JSON is not one. Read by
+    a text search rather than a full parse — job files run to megabytes and
+    every JSON under the batches folder is looked at — and remembered.
+    """
+    k = _key(path)
+    if k is None:
         return ""
-    data = _read_json(path)
-    if not isinstance(data, dict):
-        return ""
-    if not (data.get("results") or data.get("cards") or data.get("jobId")):
-        return ""
-    return str(data.get("jobName") or data.get("name") or "")
+    if k in _NAMES:
+        return _NAMES[k]
+    name = ""
+    try:
+        if k[1] <= 50_000_000:
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if b'"jobId"' in data or b'"results"' in data:
+                m = _JOB_NAME.search(data)
+                if m:
+                    name = json.loads(b'"' + m.group(1) + b'"')
+    except (OSError, ValueError):
+        name = ""
+    _NAMES[k] = name
+    return name
 
 
 def scan(root):

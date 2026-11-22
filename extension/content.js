@@ -114,6 +114,7 @@
     <div>
       <button id="saveJob">Save job data</button>
       <button id="saveHistory">Save batch history</button>
+      <button id="copyToken">Copy token for CardCropper</button>
     </div>
     <h3>Apply a change file</h3>
     <input type="file" id="file" accept=".json">
@@ -147,6 +148,17 @@
       data.jobId = data.jobId || id;
       download(`job-${data.jobName || id}.json`, data);
       log(`saved job data: ${P.cards(data).length} card(s)`, "ok");
+    } catch (e) { log(e.message, "warn"); }
+  };
+
+  // For CardCropper's "CardUploader jobs" window: it lists and fetches jobs
+  // read-only with this session's token. The token lasts about an hour and is
+  // never stored by CardCropper, so copy a fresh one each session.
+  $("copyToken").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(await token());
+      log("token copied — paste it into CardCropper (Tools → CardUploader jobs). " +
+          "It lasts about an hour.", "ok");
     } catch (e) { log(e.message, "warn"); }
   };
 

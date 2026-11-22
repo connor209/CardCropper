@@ -95,7 +95,7 @@ class PricesTab(ttk.Frame):
         self.pictures = {}
         self.thumbs = []
         from concurrent.futures import ThreadPoolExecutor
-        self._pool = ThreadPoolExecutor(max_workers=4)
+        self._pool = ThreadPoolExecutor(max_workers=2)
         self._asked = set()
 
         self._build_search()
@@ -541,9 +541,11 @@ class PricesTab(ttk.Frame):
             return
         self.open_priced_file(path)
 
-    def open_priced_file(self, path):
+    def open_priced_file(self, path, sku=None):
+        """A priced batch; with `sku`, open on that card (the Terapeak queue does)."""
         from . import folders
         folders.remember("priced", path)
+        self._want_sku = sku
         with open(path, encoding="utf-8") as fh:
             priced = [pricing.Priced(**d) for d in json.load(fh)]
         self.events.put(("ok", (priced, {}, {}, f"{len(priced)} card(s) from {path}")))
@@ -804,8 +806,12 @@ class PricesTab(ttk.Frame):
         if not keep_tab:
             self.lists.select(0)
         if priced:
-            self.cards.selection_set("0")
-            self.show(0)
+            want = getattr(self, "_want_sku", None)
+            self._want_sku = None
+            first = next((i for i, p in enumerate(priced) if want and p.sku == want), 0)
+            self.cards.selection_set(str(first))
+            self.cards.see(str(first))
+            self.show(first)
 
     def _picked_card(self):
         sel = self.cards.selection()
@@ -1116,7 +1122,7 @@ class PricesTab(ttk.Frame):
 
     # ------------------------------------------------------------ pictures
 
-    def _want(self, sale):
+    def _want(self, sale, ebay_page=True):
         """
         Get a sale's picture in the background: from the evidence when it
         carries one, else from the listing's eBay page (remembered in
@@ -1129,6 +1135,12 @@ class PricesTab(ttk.Frame):
         if key in self._asked:
             return
         self._asked.add(key)
+
+        if not ebay_page and not market.image_in(sale):
+            # The Pictures grid asks eBay for nothing: a page per thumbnail was
+            # dozens of requests at once. Selecting a sale still looks it up.
+            self._asked.discard(key)
+            return
 
         def load():
             img = None
@@ -1208,7 +1220,7 @@ class PricesTab(ttk.Frame):
             g.tag_bind(tag, "<Double-1>", lambda _e: self.open_listing())
             self._cells[market.sale_key(s)] = (i, x, y)
             self._draw_thumb(market.sale_key(s))
-            self._want(s)
+            self._want(s, ebay_page=False)
         last = len(rows) - 1
         g.configure(scrollregion=(0, 0, cols * (THUMB + pad) + pad,
                                   pad + (last // cols + 1) * (THUMB + cap + pad)))
@@ -1226,7 +1238,8 @@ class PricesTab(ttk.Frame):
         g = self.gallery
         g.delete(f"img{i}")
         if img == "pending":
-            g.create_text(x + THUMB / 2, y + THUMB / 2, text="…", fill=ui.C["faint"],
+            g.create_text(x + THUMB / 2, y + THUMB / 2, text="click for\nthe photo",
+                          fill=ui.C["faint"], font="CCSmall", justify="center",
                           tags=(f"img{i}", f"cell{i}"))
             return
         if img is None:

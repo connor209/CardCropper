@@ -82,6 +82,11 @@ class BatchesTab(ttk.Frame):
                                      command=self.open_folder, state="disabled")
         self.folder_btn.pack(side="left", padx=(6, 0))
         ui.tip(self.folder_btn, "Open the batch's folder.")
+        jobs = ttk.Button(act, text="CardUploader jobs…", style="Ghost.TButton",
+                          command=lambda: self.actions.get("jobs", lambda: None)())
+        jobs.pack(side="left", padx=(6, 0))
+        ui.tip(jobs, "Fetch a job's data from CardUploader (with a token from the extension), "
+                     "or file what the extension saved to Downloads — beside its batch here.")
         self.detail = ttk.Label(act, style="Muted.TLabel")
         self.detail.pack(side="left", padx=(12, 0))
 

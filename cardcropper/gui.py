@@ -891,9 +891,31 @@ def main():
                          (ops.queue_var, "variants")):
             if b.files.get(key):
                 var.set(b.files[key])
+    # Terapeak checks: the queue of cards a price report sent to a person.
+    from .terapeak_tab import TerapeakTab
+
+    def show_sales(path, sku):
+        sh_.show("prices")
+        prices.open_priced_file(path, sku)
+    sh_.add_page("terapeak", lambda m: TerapeakTab(m, show_sales=show_sales))
+
+    # CardUploader jobs: list and fetch with a token from the extension, or
+    # collect what it saved to Downloads.
+    from .cu_window import JobsWindow
+
+    def open_jobs():
+        JobsWindow(root, on_fetched=lambda path: folders.remember("variants", path))
+    sh_.actions = {"jobs": open_jobs, "freezes": sh_.open_freezes}
+    sh_.add_tool("CardUploader jobs…", open_jobs, separator=True)
+    # The history the extension saved, filed into the settings folder, is
+    # what Make batches reads so a batch code is never reused.
+    from .conditioning import settings_dir
+    saved_history = os.path.join(settings_dir(), "carduploader-history.json")
+    if os.path.exists(saved_history) and not ops.history_var.get():
+        ops.history_var.set(saved_history)
     sh_.add_page("batches", lambda m: BatchesTab(m, actions={
         "grade": to_grade, "condition": to_condition, "variants": to_variants,
-        "batch": to_ops}))
+        "batch": to_ops, "jobs": open_jobs}))
 
     workers = (crop, split, condition, ops, grade, prices, lib, lookup)
     busy = lambda: any(                                     # noqa: E731

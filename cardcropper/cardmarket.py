@@ -138,6 +138,7 @@ def refresh(games=GAMES, force=False, fetch=None):
         if force or a is None or a > MAX_AGE:
             try:
                 download(g, fetch)
+                _index(g, download=False)     # build (and keep) the index now, off-screen
             except Exception as exc:                        # noqa: BLE001
                 failed[g] = exc
     return failed
@@ -173,7 +174,9 @@ class Index:
         #: When each expansion's products were first added — Cardmarket adds a
         #: set's cards around its release; a later re-release comes years on.
         self.added = {e: min(ds) for e, ds in added.items()}
-        self.guide = {g.get("idProduct"): g for g in guide}
+        keep = [k for k, _ in FIELDS] + [f"{k}-{v}" for k, _ in FIELDS for v in ("holo", "foil")]
+        self.guide = {g.get("idProduct"): {k: g[k] for k in keep if g.get(k) is not None}
+                      for g in guide}
 
 
 def _index(game, download=True):
@@ -189,11 +192,33 @@ def _index(game, download=True):
         have = _loaded.get(game)
         if have and have[0] == mtimes:
             return have[1]
-    with open(paths[0], encoding="utf-8") as fh:
-        products = json.load(fh).get("products") or []
-    with open(paths[1], encoding="utf-8") as fh:
-        g = json.load(fh)
-    idx = Index(products, g.get("priceGuides") or [], g.get("createdAt", ""))
+    # The 15 MB files are parsed once per download and the index kept as a
+    # pickle: parsing them holds the interpreter for seconds on a slow PC,
+    # and a window cannot redraw while any thread does.
+    import pickle
+    cache = os.path.join(folder(), f"index-{game}.pickle")
+    idx = None
+    try:
+        with open(cache, "rb") as fh:
+            saved_mtimes, idx = pickle.load(fh)
+        if saved_mtimes != mtimes:
+            idx = None
+    except Exception:                                       # noqa: BLE001
+        idx = None
+    if idx is None:
+        with open(paths[0], encoding="utf-8") as fh:
+            products = json.load(fh).get("products") or []
+        with open(paths[1], encoding="utf-8") as fh:
+            g = json.load(fh)
+        idx = Index(products, g.get("priceGuides") or [], g.get("createdAt", ""))
+        del products, g
+        try:
+            tmp = cache + ".part"
+            with open(tmp, "wb") as fh:
+                pickle.dump((mtimes, idx), fh, protocol=pickle.HIGHEST_PROTOCOL)
+            os.replace(tmp, cache)
+        except OSError:
+            pass
     with _lock:
         _loaded[game] = (mtimes, idx)
     return idx

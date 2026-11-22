@@ -197,6 +197,60 @@ def pipeline_checks(work):
     check(ka.next_step == "Done" and "2 change" in ka.stages["changes"][1], ka.stages)
 
 
+def daily_checks(work):
+    """The Terapeak queue, CardUploader jobs from Downloads, and the Today list."""
+    import json as _json
+    from cardcropper import batches, cu_jobs, folders, report, terapeak, today
+    root = os.path.join(work, "daily")
+    folder = os.path.join(root, "26.11.22 - 001", "cropped")
+    os.makedirs(folder)
+    b = batches.Batch("KZ", "pokemon", "en", folder,
+                      cards=[batches.ManifestCard("KZ1", 1, 1)])
+    batches.write_manifest(b, folder)
+    folders.save_settings(batches_root=root)
+
+    tp = os.path.join(folder, "terapeak-KZ.csv")
+    with open(tp, "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=report.TERAPEAK_FIELDS + ["extra"])
+        w.writeheader()
+        w.writerow({"sku": "KZ1", "title": "Lugia 78/124 Fates Collide NM", "current": "4.49",
+                    "suggested": "9.99", "reason": "price rise on 2 sale(s)", "extra": "x"})
+        w.writerow({"sku": "KZ2", "title": "Aron 44/100", "current": "2.49",
+                    "suggested": "", "reason": "no sales"})
+    check(terapeak.pending(root) == 2, "two checks should be waiting")
+    check("Fates+Collide" in terapeak.research_url("Lugia 78/124 Fates Collide NM")
+          and "tabName=SOLD" in terapeak.research_url("x"), "Terapeak link wrong")
+    terapeak.save(tp, "KZ1", price=6.49, note="checked")
+    rows = report.read_csv(tp)
+    check(rows[0]["checked"] == "yes" and rows[0]["terapeak_price"] == "6.49"
+          and rows[0]["extra"] == "x", f"check not saved cleanly: {rows[0]}")
+    check(terapeak.pending(root) == 1, "one check should be left")
+    items = today.items(root)
+    check(any("1 Terapeak check" in t for t, _, _ in items), f"Today list: {items}")
+    check(any(page == "batches" for _, page, _ in items), "batch steps missing from Today")
+
+    hist = {"jobs": [{"jobName": "KZ", "id": "j-1", "createdAt": "2026-11-22T10:00:00"},
+                     {"jobName": "KY", "id": "j-0", "createdAt": "2026-11-20T10:00:00"}]}
+    jobs = cu_jobs.jobs_in(hist)
+    check([j["name"] for j in jobs] == ["KZ", "KY"] and jobs[0]["id"] == "j-1",
+          f"job list wrong: {jobs}")
+    check(cu_jobs.destination("KZ", root) == folder, "a job should go beside its manifest")
+    path = cu_jobs.fetch_job(jobs[0], "token", root, get=lambda jid, token: {
+        "results": {"cards": []}})
+    check(path == os.path.join(folder, "job-KZ.json"), path)
+    downloads = os.path.join(work, "Downloads")
+    os.makedirs(downloads)
+    with open(os.path.join(downloads, "job-KY.json"), "w") as fh:
+        _json.dump({"jobName": "KY", "jobId": "j-0", "results": {"cards": []}}, fh)
+    with open(os.path.join(downloads, "job-application.json"), "w") as fh:
+        _json.dump({"something": "else"}, fh)
+    moved = cu_jobs.collect_downloads(root, downloads)
+    check(len(moved) == 1 and moved[0][1].endswith(os.path.join("KY", "job-KY.json")),
+          f"collect wrong: {moved}")
+    check(os.path.exists(os.path.join(downloads, "job-application.json")),
+          "a file that is not job data must be left alone")
+
+
 def market_checks(work):
     from cardcropper import market, pricing
 
@@ -673,6 +727,7 @@ def main():
     try:
         library_checks(work)
         pipeline_checks(work)
+        daily_checks(work)
         market_checks(work)
         watchdog_checks()
         backup_checks()

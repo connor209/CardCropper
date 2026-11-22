@@ -384,9 +384,20 @@ class HomePage(ttk.Frame):
         b.grid(row=0, column=3, padx=(6, 0))
         ui.tip(b, "Look the card up: printings, reference prices, picture.")
 
+        # Today: what is waiting, each line a button to the page it is done on.
+        self.today = ttk.Frame(self, style="Card.TFrame", padding=(14, 10))
+        self.today.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 16))
+        self.today.columnconfigure(0, weight=1)
+        ttk.Label(self.today, text="Today", style="CardHead.TLabel").grid(row=0, column=0,
+                                                                         sticky="w")
+        self.today_body = ttk.Frame(self.today, style="Card.TFrame")
+        self.today_body.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        ttk.Label(self.today_body, text="Looking…", style="CardMuted.TLabel").pack(anchor="w")
+        self._today_result = None
+
         for c, (stage, steps) in enumerate(self.STEPS.items()):
             col = ttk.Frame(self, style="Card.TFrame", padding=(14, 12))
-            col.grid(row=3, column=c, sticky="nsew", padx=(0 if c == 0 else 12, 0))
+            col.grid(row=4, column=c, sticky="nsew", padx=(0 if c == 0 else 12, 0))
             col.columnconfigure(0, weight=1)
             ttk.Label(col, text=stage, style="CardHead.TLabel").grid(row=0, column=0,
                                                                      sticky="w", pady=(0, 6))
@@ -400,7 +411,7 @@ class HomePage(ttk.Frame):
                 ui.tip(btn, f"{info['label']}: {info['lead']}")
 
         self.cards = ttk.Frame(self)
-        self.cards.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+        self.cards.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(16, 0))
         self.figures = {}
         for i, (key, label, tiptext, go) in enumerate((
                 ("graded", "Cards graded by hand", "Every card in the grade library.",
@@ -423,10 +434,56 @@ class HomePage(ttk.Frame):
             self.figures[key] = card
         ttk.Label(self, style="Small.TLabel", text=(
             "Hover over anything for what it does. Each page has a guide (F1). "
-            "Ctrl+1…9 jumps between pages.")).grid(row=5, column=0, columnspan=3, sticky="w",
+            "Ctrl+1…9 jumps between pages.")).grid(row=6, column=0, columnspan=3, sticky="w",
                                                    pady=(18, 0))
 
+    def _load_today(self):
+        """Work the Today list out in the background; shown when it is ready."""
+        import threading
+        from . import today
+        if getattr(self, "_today_busy", False):
+            return
+        self._today_busy = True
+        box = {}
+
+        def run():
+            try:
+                box["rows"] = today.items()
+            except Exception as exc:                        # noqa: BLE001
+                box["rows"] = [(f"Could not work out today's list: {exc}", "", "")]
+
+        def wait():
+            if "rows" not in box:
+                self.after(200, wait)
+                return
+            self._today_busy = False
+            self._show_today(box["rows"])
+        threading.Thread(target=run, daemon=True).start()
+        self.after(200, wait)
+
+    def _show_today(self, rows):
+        for w in self.today_body.winfo_children():
+            w.destroy()
+        if not rows:
+            ttk.Label(self.today_body, text="Nothing waiting. ✓", style="Card.TLabel",
+                      foreground=ui.C["ok"]).pack(anchor="w")
+            return
+        for text, page, tip_text in rows:
+            b = ttk.Button(self.today_body, text=f"→  {text}", style="Step.TButton",
+                           command=lambda p=page: self._go(p))
+            b.pack(fill="x", pady=1)
+            if tip_text:
+                ui.tip(b, tip_text)
+
+    def _go(self, page):
+        special = getattr(self.shell, "actions", {}).get(page)
+        if special:
+            special()
+        elif page in self.shell.pages:
+            self.shell.show(page)
+
     def on_show(self):
+        self._load_today()
         from . import library, market
         try:
             st = library.stats()

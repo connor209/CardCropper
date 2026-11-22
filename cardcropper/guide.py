@@ -11,14 +11,14 @@ A tip names the control's effect and, where it matters, what it will NOT do
 """
 
 #: Pages that are one big workspace: their guide starts shut (F1 opens it).
-GUIDE_CLOSED = {"grade", "variants", "prices", "lookup", "library"}
+GUIDE_CLOSED = {"grade", "variants", "prices", "lookup", "library", "terapeak"}
 
 #: (group, [page keys]) — the sidebar, in the order the work is done.
 GROUPS = (
     ("", ("home", "batches")),
     ("1 · Scan", ("folders", "split", "crop")),
     ("2 · Grade", ("condition", "grade", "library")),
-    ("3 · List & price", ("variants", "lookup", "prices", "batch")),
+    ("3 · List & price", ("variants", "lookup", "prices", "terapeak", "batch")),
 )
 
 PAGES = {
@@ -176,6 +176,20 @@ house rules make the price.
 
 History keeps every search with its listings. More ▾ has the golden test, priced batches,
 importing sales from a Terapeak CSV, and Comp Finder sign-in."""),
+
+    "terapeak": dict(
+        label="Terapeak checks", icon="✓",
+        title="Terapeak checks",
+        lead="Every card a price report sent to a person, from every batch, in one queue.",
+        guide="""\
+The cards here are the ones Price & report would not price on its own: a rise on few sales,
+a wide spread, no sales of the printing. They come from terapeak-<job>.csv beside each job,
+under the Batches folder.
+
+For each: Open Terapeak (already searched, UK, sold, 90 days), type the price you settle on
+and press Enter — or Keep current. It is written into that job's file, as typing into the CSV
+would. When a job has none left, Report again runs its report; then write the change file on
+Batch & price."""),
 
     "batch": dict(
         label="Batch & price", icon="⚙",
