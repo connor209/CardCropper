@@ -15,7 +15,7 @@ GUIDE_CLOSED = {"grade", "variants", "prices", "lookup", "library"}
 
 #: (group, [page keys]) — the sidebar, in the order the work is done.
 GROUPS = (
-    ("", ("home",)),
+    ("", ("home", "batches")),
     ("1 · Scan", ("folders", "split", "crop")),
     ("2 · Grade", ("condition", "grade", "library")),
     ("3 · List & price", ("variants", "lookup", "prices", "batch")),
@@ -27,6 +27,20 @@ PAGES = {
         title="CardCropper",
         lead="From a pile of cards to listed, graded and priced — one stage at a time.",
         guide=""),
+
+    "batches": dict(
+        label="Batches", icon="☰",
+        title="Batches",
+        lead="Every batch under a folder, how far each has got, and its next step.",
+        guide="""\
+Choose the folder your batches live under (once — it is remembered).
+
+Each row is a batch: one coded for CardUploader (from its manifest), or one conditioned
+from an export. The columns say how far each stage has got — batched, graded, variants,
+priced, change file — read off the files those steps write, so it is always current.
+
+Select a batch and Go to: its next step opens the page that step happens on, with the
+batch's own file loaded."""),
 
     "folders": dict(
         label="Scan folders", icon="▣",

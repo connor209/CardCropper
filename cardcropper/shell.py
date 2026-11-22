@@ -311,7 +311,8 @@ class HomePage(ttk.Frame):
     """
 
     STEPS = {
-        "1 · Scan": (("folders", "Make today's scan folders"),
+        "1 · Scan": (("batches", "See where every batch has got to"),
+                     ("folders", "Make today's scan folders"),
                      ("split", "File a long run into stacks"),
                      ("crop", "Pair and crop the scans")),
         "2 · Grade": (("condition", "Rank an export by wear"),

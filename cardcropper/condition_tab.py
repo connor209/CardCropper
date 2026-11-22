@@ -387,10 +387,10 @@ class ConditionTab(ttk.Frame):
         left = sum(1 for r in self.records if not self.grades.get(r["sku"]))
         self._say(f"{sku}: {grade}  ({left} card(s) still to grade)")
 
-    def open_prepared(self):
+    def open_prepared(self, folder=None):
         """A batch prepared earlier: its triage.csv, ranked as it was, ready to grade."""
-        folder = filedialog.askdirectory(title="A prepared batch's output folder "
-                                               "(the one holding triage.csv)")
+        folder = folder or filedialog.askdirectory(title="A prepared batch's output folder "
+                                                         "(the one holding triage.csv)")
         if not folder:
             return
         path = os.path.join(folder, "triage.csv")

@@ -160,6 +160,43 @@ def blind_checks():
           f"grader figures wrong: {bob}")
 
 
+def pipeline_checks(work):
+    """The Batches page's status follows the files each step leaves behind."""
+    import json as _json
+    from cardcropper import batches, grading, pipeline
+    root = os.path.join(work, "pipeline")
+    folder = os.path.join(root, "26.11.22 - 001", "cropped")
+    os.makedirs(folder)
+    b = batches.Batch("KA", "pokemon", "en", folder, cards=[
+        batches.ManifestCard(f"KA{i}", i, i) for i in range(1, 4)])
+    batches.write_manifest(b, folder)
+
+    def status():
+        got = {x.name: x for x in pipeline.scan(root)}
+        return got["KA"]
+    ka = status()
+    check(ka.cards == 3 and ka.next_page == "grade", f"new batch: {ka}")
+    for sku in ("KA1", "KA2", "KA3"):
+        grading.record(os.path.join(folder, "grades-KA.csv"), sku,
+                       grading.Assessment("LP"), "LP", [])
+    ka = status()
+    check(ka.stages["graded"][0] and ka.next_page == "variants", f"after grading: {ka.stages}")
+    with open(os.path.join(folder, "job.json"), "w", encoding="utf-8") as fh:
+        _json.dump({"jobName": "KA", "jobId": "j1", "results": {"cards": []}}, fh)
+    check(status().files.get("job"), "saved job data not found by its jobName")
+    with open(os.path.join(folder, "variant-queue-KA.csv"), "w", encoding="utf-8") as fh:
+        fh.write("sku,decision\nKA1,correct\n")
+    with open(os.path.join(folder, "priced-KA.json"), "w", encoding="utf-8") as fh:
+        _json.dump([{"sku": "KA1", "suggested": 2.49}], fh)
+    ka = status()
+    check(ka.stages["priced"][0] and ka.next_page == "batch"
+          and ka.next_step == "Write the change file", f"after pricing: {ka.stages}")
+    with open(os.path.join(folder, "changes-KA.json"), "w", encoding="utf-8") as fh:
+        _json.dump({"changes": [{}, {}]}, fh)
+    ka = status()
+    check(ka.next_step == "Done" and "2 change" in ka.stages["changes"][1], ka.stages)
+
+
 def market_checks(work):
     from cardcropper import market, pricing
 
@@ -524,7 +561,8 @@ def window_checks():
             check(not graded, f"Ctrl+1 graded the card: {graded}")
             # A headless Windows runner may not deliver a synthetic key press
             # at all; then the page stays put. Anywhere else is a wrong binding.
-            check(sh.current in ("folders", "grade"), f"Ctrl+1 went to {sh.current}")
+            first = [k for _, ks in guide.GROUPS for k in ks if k != "home"][0]
+            check(sh.current in (first, "grade"), f"Ctrl+1 went to {sh.current}")
             sh.toggle_guide("crop")
             sh.toggle_guide("crop")
         finally:
@@ -548,6 +586,7 @@ def main():
     os.environ["APPDATA"] = os.path.join(work, "config")
     try:
         library_checks(work)
+        pipeline_checks(work)
         market_checks(work)
         watchdog_checks()
         window_checks()

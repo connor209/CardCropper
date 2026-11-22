@@ -849,7 +849,7 @@ def main():
     condition = sh_.add_page("condition", ConditionTab)
     grade = sh_.add_page("grade", GradeTab)
     lib = sh_.add_page("library", LibraryTab)
-    sh_.add_page("variants", VariantTab)
+    variants_page = sh_.add_page("variants", VariantTab)
     prices = sh_.add_page("prices", PricesTab)
     try:
         from .lookup_tab import LookupTab
@@ -868,6 +868,32 @@ def main():
     ops = sh_.add_page("batch", OpsTab)
     ops.view_in_market = lambda folder: (sh_.show("prices"), prices.open_priced(folder))
     sh_.add_page("home", lambda m: shell_mod.HomePage(m, sh_))
+
+    # Batches: each batch's next step opens its page with the batch loaded.
+    from .batches_tab import BatchesTab
+
+    def to_grade(b):
+        sh_.show("grade")
+        grade.load(b.files["manifest"])
+
+    def to_condition(b):
+        sh_.show("condition")
+        condition.open_prepared(b.folder)
+
+    def to_variants(b):
+        sh_.show("variants")
+        if b.files.get("job"):
+            variants_page.load(b.files["job"])
+
+    def to_ops(b):
+        sh_.show("batch")
+        for var, key in ((ops.job_var, "job"), (ops.grades_var, "grades"),
+                         (ops.queue_var, "variants")):
+            if b.files.get(key):
+                var.set(b.files[key])
+    sh_.add_page("batches", lambda m: BatchesTab(m, actions={
+        "grade": to_grade, "condition": to_condition, "variants": to_variants,
+        "batch": to_ops}))
 
     workers = (crop, split, condition, ops, grade, prices, lib, lookup)
     busy = lambda: any(                                     # noqa: E731
