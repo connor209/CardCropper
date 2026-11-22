@@ -456,6 +456,38 @@ def golden_check(evidence):
     return [(t, e, p.suggested, ok) for t, e, p, ok in golden_priced(evidence)]
 
 
+def working(p):
+    """How the price was reached, step by step, in words a person can redo."""
+    floor = FLOORS.get(p.game, FLOORS["pokemon"])
+    if p.method == "register":
+        return [f"From the price register (recent eBay sold comps): £{p.suggested:.2f}."]
+    if p.status in ("timeout", "error"):
+        return [f"The Comp Finder lookup failed ({p.status}) — no price; run it again."]
+    if not p.totals:
+        return [f"No sales of this printing kept — no price. Goes to a Terapeak check; "
+                f"the floor for {p.game} is £{floor:.2f}."]
+    totals = ", ".join(f"£{t:.2f}" for t in p.totals)
+    lines = [f"Totals (price + postage, postage capped at £{POSTAGE_CAP:.2f}), lowest first: "
+             f"{totals}"]
+    if p.method == "lowest":
+        lines.append(f"Fewer than {MIN_FOR_PERCENTILE} sales, so the lowest: £{p.basis:.2f}.")
+    else:
+        lines.append(f"{PERCENTILE}th percentile of {p.n_sales} sales: £{p.basis:.2f}.")
+    lines.append(f"Up onto the .49/.99 ladder (floor £{floor:.2f}): £{p.lp_price:.2f}.")
+    mult = CONDITION_MULTIPLIERS.get(p.condition, 1.0)
+    if p.condition == "MP" and p.lp_price is not None and p.lp_price < MP_MIN_LP:
+        mult = 1.0
+    if mult != 1.0:
+        lines.append(f"{p.condition} × {mult:.2f}, back up onto the ladder: £{p.suggested:.2f}.")
+    else:
+        lines.append(f"{p.condition}: no condition cut — £{p.suggested:.2f}.")
+    if p.current is not None:
+        lines.append(f"Current price £{p.current:.2f}.")
+    lines.append(f"Decision: {p.decision} — {p.reason}"
+                 + (f"   flags: {', '.join(p.flags)}" if p.flags else ""))
+    return lines
+
+
 def explain(p, evidence_row=None):
     """
     The working behind one price, for a person to check: every sale kept (date,

@@ -693,6 +693,13 @@ recommendations not applied, the Connor list, and cards kept at an old price
 without fresh comps. **A batch is never called READY while anything was
 skipped.**
 
+**Prices tab.** The working behind any price, in the window: **Golden test**
+(live) or **Last golden run** (the saved sales, no new search), **Open priced
+batch…** for a `priced-<job>.json`, or type any listing title and **Look up**.
+Select a card to see every sale Comp Finder found — kept, or left out and why
+(graded, other printing, a lot, outside the UK…) — and the price worked out
+step by step. Double-click a sale to open the eBay listing.
+
 ### 6. Push to CardUploader (`--cli changes`, then the extension)
 
 **Write change file** gathers the condition changes (from the grades, after

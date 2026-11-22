@@ -1470,6 +1470,7 @@ def main():
         import cardcropper.grade_tab             # noqa: F401
         import cardcropper.variant_tab           # noqa: F401
         import cardcropper.ops_tab               # noqa: F401
+        import cardcropper.prices_tab            # noqa: F401
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

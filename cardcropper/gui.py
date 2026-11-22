@@ -838,12 +838,13 @@ def main():
     from .condition_tab import ConditionTab
     from .grade_tab import GradeTab
     from .ops_tab import OpsTab
+    from .prices_tab import PricesTab
     from .variant_tab import VariantTab
 
     pages = {"crop": ttk.Frame(tabs), "folders": ttk.Frame(tabs),
              "split": ttk.Frame(tabs), "condition": ttk.Frame(tabs),
              "batch": ttk.Frame(tabs), "grade": ttk.Frame(tabs),
-             "variants": ttk.Frame(tabs)}
+             "variants": ttk.Frame(tabs), "prices": ttk.Frame(tabs)}
     tabs.add(pages["crop"], text="Crop cards")
     tabs.add(pages["folders"], text="Scan folders")
     tabs.add(pages["split"], text="Split into stacks")
@@ -851,6 +852,7 @@ def main():
     tabs.add(pages["batch"], text="Batch & price")
     tabs.add(pages["grade"], text="Grade")
     tabs.add(pages["variants"], text="Variants")
+    tabs.add(pages["prices"], text="Prices")
     crop = App(pages["crop"])
     FoldersTab(pages["folders"], settings)
     split = SplitTab(pages["split"], crop_settings=crop.crop_settings)
@@ -858,6 +860,7 @@ def main():
     ops = OpsTab(pages["batch"])
     grade = GradeTab(pages["grade"])
     VariantTab(pages["variants"])
+    prices = PricesTab(pages["prices"])
     # Open on whichever tab was in use last — someone who starts the day by
     # making folders should not have to click across to them every time.
     if settings.get("tab") in pages:
@@ -870,7 +873,8 @@ def main():
     from . import updater
     busy = lambda: any(t is not None and t.is_alive()                 # noqa: E731
                        for t in (crop.worker, crop.planner, split.worker, split.planner,
-                                 condition.worker, ops.worker, grade.worker))
+                                 condition.worker, ops.worker, grade.worker,
+                                 prices.worker))
     root.after(1500, lambda: updater.offer(root, is_busy=busy))
 
     # Which build this is, and a check that always answers — the one on start
