@@ -818,74 +818,86 @@ class FoldersTab(ttk.Frame):
 
 
 def main():
+    from . import guide, shell as shell_mod, ui, updater
+
     root = tk.Tk()
     root.title(APP_NAME)
-    root.geometry("1080x840")
-    root.minsize(880, 620)
-    try:
-        ttk.Style().theme_use("vista" if sys.platform.startswith("win") else "clam")
-    except tk.TclError:
-        pass
+    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+    root.geometry(f"{min(1360, sw - 60)}x{min(900, sh - 90)}")
+    root.minsize(960, 600)
+    ui.apply_theme(root)
 
     settings = folders.load_settings()
-    tabs = ttk.Notebook(root)
-    tabs.grid(row=0, column=0, sticky="nsew")
-    root.columnconfigure(0, weight=1)
-    root.rowconfigure(0, weight=1)
     # Imported here rather than at the top: the split tab borrows from this
     # module, and by now this module has finished loading.
-    from .stacks_tab import SplitTab
     from .condition_tab import ConditionTab
     from .grade_tab import GradeTab
+    from .library_tab import LibraryTab
     from .ops_tab import OpsTab
     from .prices_tab import PricesTab
+    from .stacks_tab import SplitTab
     from .variant_tab import VariantTab
 
-    pages = {"crop": ttk.Frame(tabs), "folders": ttk.Frame(tabs),
-             "split": ttk.Frame(tabs), "condition": ttk.Frame(tabs),
-             "batch": ttk.Frame(tabs), "grade": ttk.Frame(tabs),
-             "variants": ttk.Frame(tabs), "prices": ttk.Frame(tabs)}
-    tabs.add(pages["crop"], text="Crop cards")
-    tabs.add(pages["folders"], text="Scan folders")
-    tabs.add(pages["split"], text="Split into stacks")
-    tabs.add(pages["condition"], text="Condition a CSV")
-    tabs.add(pages["batch"], text="Batch & price")
-    tabs.add(pages["grade"], text="Grade")
-    tabs.add(pages["variants"], text="Variants")
-    tabs.add(pages["prices"], text="Prices")
-    crop = App(pages["crop"])
-    FoldersTab(pages["folders"], settings)
-    split = SplitTab(pages["split"], crop_settings=crop.crop_settings)
-    condition = ConditionTab(pages["condition"])
-    ops = OpsTab(pages["batch"])
-    grade = GradeTab(pages["grade"])
-    VariantTab(pages["variants"])
-    prices = PricesTab(pages["prices"])
-    # Open on whichever tab was in use last — someone who starts the day by
-    # making folders should not have to click across to them every time.
-    if settings.get("tab") in pages:
-        tabs.select(pages[settings["tab"]])
-    tabs.bind("<<NotebookTabChanged>>", lambda _e: folders.save_settings(
-        tab=next(k for k, page in pages.items() if str(page) == tabs.select())))
+    sh_ = shell_mod.Shell(root, settings, APP_NAME)
+    # Built in dependency order (Split borrows the Crop tab's settings, Card
+    # lookup hands titles to the Market page); shown in sidebar order.
+    crop = sh_.add_page("crop", App)
+    sh_.add_page("folders", lambda m: FoldersTab(m, settings))
+    split = sh_.add_page("split", lambda m: SplitTab(m, crop_settings=crop.crop_settings))
+    condition = sh_.add_page("condition", ConditionTab)
+    grade = sh_.add_page("grade", GradeTab)
+    lib = sh_.add_page("library", LibraryTab)
+    sh_.add_page("variants", VariantTab)
+    prices = sh_.add_page("prices", PricesTab)
+    try:
+        from .lookup_tab import LookupTab
 
-    # Asked a moment after the window is up, so a slow network never holds it
-    # back, and never while something is running — updating restarts the app.
-    from . import updater
-    busy = lambda: any(t is not None and t.is_alive()                 # noqa: E731
-                       for t in (crop.worker, crop.planner, split.worker, split.planner,
-                                 condition.worker, ops.worker, grade.worker,
-                                 prices.worker))
-    root.after(1500, lambda: updater.offer(root, is_busy=busy))
+        def price_this(title):
+            sh_.show("prices")
+            prices.lookup(title)
+        lookup = sh_.add_page("lookup", lambda m: LookupTab(m, on_price=price_this))
+    except Exception:                                       # noqa: BLE001
+        traceback.print_exc()
+        lookup = None
+    ops = sh_.add_page("batch", OpsTab)
+    sh_.add_page("home", lambda m: shell_mod.HomePage(m, sh_))
 
-    # Which build this is, and a check that always answers — the one on start
-    # stays quiet when it cannot check, which looks the same as up to date.
-    bar = ttk.Frame(root, padding=(10, 2, 10, 6))
-    bar.grid(row=1, column=0, sticky="ew")
+    workers = (crop, split, condition, ops, grade, prices, lib, lookup)
+    busy = lambda: any(                                     # noqa: E731
+        t is not None and t.is_alive()
+        for o in workers if o is not None
+        for t in (getattr(o, "worker", None), getattr(o, "planner", None)))
+
+    # Tools menu: the settings and logins that used to hide on single pages.
+    sh_.add_tool("Comp Finder login…", lambda: (sh_.show("prices"), prices.set_login()))
+    sh_.add_tool("Import grades into the library…",
+                 lambda: (sh_.show("library"), lib.import_folder()))
+    sh_.add_tool("Check for updates", lambda: check_updates(), separator=True)
+
+    # Status bar: which build, how big the library is, whether Comp Finder
+    # is set up — the things that explain "why did that not work" at a glance.
     mine = updater.current()
-    ttk.Label(bar, foreground="#666",
-              text=f"Build {mine[:7]}" if mine else "Build: not stamped (cannot self-update)")\
-        .pack(side="left")
-    check_btn = ttk.Button(bar, text="Check for updates")
+    sh_.status("build", f"Build {mine[:7]}" if mine else "Build: from source",
+               "Which build this is. A copy run from source never updates itself.")
+
+    def status():
+        from . import library, pricing
+        try:
+            st = library.stats()
+            sh_.status("library", f"★ {st['cards']} graded · "
+                                  f"{sum(g['cards'] for g in st['golden'].values())} golden",
+                       "Cards in the grade library, and how many are in golden sets. "
+                       "Click to open it.", command=lambda: sh_.show("library"))
+        except Exception:                                   # noqa: BLE001
+            pass
+        on = bool(pricing.comp_finder_cookie())
+        sh_.status("cf", "Comp Finder: logged in" if on else "Comp Finder: not logged in",
+                   "Sold-listing searches go through Comp Finder. Click to set the login.",
+                   command=lambda: (sh_.show("prices"), prices.set_login()))
+    sh_.on_status = status
+
+    check_btn = ttk.Button(sh_.status_right, text="Check for updates", style="Ghost.TButton")
+    ui.tip(check_btn, "Look for a newer build now, and say what was found either way.")
 
     def check_updates():
         check_btn.configure(state="disabled", text="Checking…")
@@ -893,4 +905,13 @@ def main():
             state="normal", text="Check for updates"))
     check_btn.configure(command=check_updates)
     check_btn.pack(side="right")
+
+    # Open on whichever page was in use last — someone who starts the day by
+    # making folders should not have to click across to them every time.
+    start = settings.get("tab")
+    sh_.show(start if start in sh_.pages else "home")
+
+    # Asked a moment after the window is up, so a slow network never holds it
+    # back, and never while something is running — updating restarts the app.
+    root.after(1500, lambda: updater.offer(root, is_busy=busy))
     root.mainloop()

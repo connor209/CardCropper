@@ -1509,6 +1509,9 @@ def main():
         import cardcropper.variant_tab           # noqa: F401
         import cardcropper.ops_tab               # noqa: F401
         import cardcropper.prices_tab            # noqa: F401
+        import cardcropper.library_tab           # noqa: F401
+        import cardcropper.lookup_tab            # noqa: F401
+        import cardcropper.shell                 # noqa: F401
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -1516,6 +1519,10 @@ def main():
     conditioning_smoke.main()
     from tests import features_smoke
     features_smoke.main()
+    from tests import catalog_smoke
+    catalog_smoke.main()
+    from tests import window_smoke
+    window_smoke.main()
 
     print("smoke: ok")
     return 0

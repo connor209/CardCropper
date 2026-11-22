@@ -368,8 +368,14 @@ def similar(line=None, back_points=None, back_corners=None, worst_corner_pct=Non
     cards in the same line, by whichever measurements both have. Returns
     ({grade: count}, [cards]). Advice for a grader — never a grade.
     """
+    def measured(x):
+        return x["source"] != "golden-blind" and any(
+            x[k] not in (None, "") for k in ("back_points", "back_corners", "worst_corner_pct"))
+
     def dist(c):
-        g = next((x for x in reversed(c["grades"]) if x["source"] != "golden-blind"), None)
+        # The latest grade that MEASURED something: a second pass keyed with
+        # no counts says nothing about where the card sits.
+        g = next((x for x in reversed(c["grades"]) if measured(x)), None)
         if g is None:
             return None
         d, n = 0.0, 0

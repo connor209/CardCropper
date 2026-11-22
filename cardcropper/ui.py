@@ -92,12 +92,17 @@ def apply_theme(root):
         "CCHeading": (base, 11, "bold"),
         "CCSmall": (base, 9, "normal"),
         "CCBig": (base, 20, "bold"),
+        "CCValue": (base, 15, "bold"),
         "CCMono": ("Consolas" if sys.platform.startswith("win") else "DejaVu Sans Mono", 9,
                    "normal"),
     }
+    # Kept on the root: a tkinter Font deletes its Tk font when the Python
+    # object is collected, and every label using it falls back to the default.
+    root._cc_fonts = []                                     # noqa: SLF001
     for name, (family, size, weight) in fonts.items():
         try:
-            tkfont.Font(root, name=name, family=family, size=size, weight=weight)
+            root._cc_fonts.append(tkfont.Font(root, name=name, family=family, size=size,
+                                              weight=weight))
         except tk.TclError:
             tkfont.nametofont(name).configure(family=family, size=size, weight=weight)
 
@@ -152,6 +157,7 @@ def apply_theme(root):
     style.map("Ghost.TButton", background=[("active", C["accent_soft"])],
               bordercolor=[("active", C["accent_soft"])],
               foreground=[("disabled", C["faint"])])
+    style.configure("Step.TButton", anchor="w", padding=(12, 6))
     style.configure("Grade.TButton", font=("TkDefaultFont", 10, "bold"), padding=(6, 6))
     for g, colour in GRADE_COLOURS.items():
         style.configure(f"{g}.Grade.TButton", foreground=colour)
@@ -187,6 +193,7 @@ def apply_theme(root):
     style.configure("CardMuted.TLabel", background=C["surface"], foreground=C["muted"],
                     font="CCSmall")
     style.configure("CardBig.TLabel", background=C["surface"], font="CCBig")
+    style.configure("CardValue.TLabel", background=C["surface"], font="CCValue")
     style.configure("CardHead.TLabel", background=C["surface"], font="CCHeading")
     style.configure("Sunken.TFrame", background=C["sunken"])
     style.configure("Header.TFrame", background=C["surface"])
@@ -361,7 +368,7 @@ def walk(widget):
         yield from walk(child)
 
 
-def attach_tips(container, tips, primary=(), subtle=()):
+def attach_tips(container, tips, primary=(), subtle=(), styles=None):
     """
     Put tooltips on a page built without them, and lift its buttons into the
     three layers.
@@ -374,7 +381,8 @@ def attach_tips(container, tips, primary=(), subtle=()):
     * a label's text also covers the entry, list or spinbox that follows it in
       the same row, so hovering either explains the field.
 
-    `primary` and `subtle` are button texts to restyle as Accent / Ghost.
+    `primary` and `subtle` are button texts to restyle as Accent / Ghost;
+    `styles` maps any other button text to a style name.
     Returns how many widgets got a tip, so a test can see a page still matches
     its catalogue.
     """
@@ -405,7 +413,9 @@ def attach_tips(container, tips, primary=(), subtle=()):
                 tip(w, pending)
                 n += 1
             if cls in ("TButton", "Button") and text:
-                if text in primary:
+                if styles and text in styles:
+                    w.configure(style=styles[text])
+                elif text in primary:
                     w.configure(style="Accent.TButton")
                 elif text in subtle:
                     w.configure(style="Ghost.TButton")
@@ -417,7 +427,7 @@ def attach_tips(container, tips, primary=(), subtle=()):
 # ---------------------------------------------------------------- building blocks
 
 
-def more_menu(parent, items, text="More ▾", tip_text=None):
+def more_menu(parent, items, text="More", tip_text=None):
     """
     A menu button holding the actions used now and then.
 
@@ -478,14 +488,14 @@ def info_dialog(parent, title, text, width=560):
     return top
 
 
-def stat_card(parent, label, value="—", sub="", width=150):
+def stat_card(parent, label, value="—", sub="", width=150, compact=False):
     """
     A boxed figure: small label, big number, smaller note. Returns the frame;
     its `.set(value, sub=None, colour=None)` updates it.
     """
     f = ttk.Frame(parent, style="Card.TFrame", padding=(12, 8))
     ttk.Label(f, text=label, style="CardMuted.TLabel").pack(anchor="w")
-    v = ttk.Label(f, text=value, style="CardBig.TLabel")
+    v = ttk.Label(f, text=value, style="CardValue.TLabel" if compact else "CardBig.TLabel")
     v.pack(anchor="w")
     s = ttk.Label(f, text=sub, style="CardMuted.TLabel", wraplength=width)
     s.pack(anchor="w")
