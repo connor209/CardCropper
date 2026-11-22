@@ -7,10 +7,10 @@ never shrunk — with the same panel of a clean and an LP reference card of the
 same game beside it. Stepping onto a panel marks it opened (`looked`).
 
 Keys: 1-6 or N / L / M / H / D / X for NM / LP / MP / HP / DMG / HOLD.
-Right / Left (or Space / Backspace) step through the panels. The whole card
-is there too: S front and back side by side, F the full front, B the full
-back, C the crop sheets (press
-again for the back's), P back to the panels. Full views fit the window by
+Each card opens on its front and back side by side. Right / Left (or Space /
+Backspace) walk it: front + back, the front's crop sheet, the back's, then the
+sixteen panels one by one. Or jump: S front + back, C the crop sheets (press
+again for the back's), P the panels, F or B one face alone. Full views fit the window by
 default; pick a zoom to see them at 1:1 or larger. The wear counts
 from the crop checks are pre-filled and can be corrected.
 
@@ -45,13 +45,14 @@ _CORNER_INDEX = {"tl": 0, "tr": 1, "bl": 2, "br": 3}
 _EDGE_INDEX = {"top": 0, "bottom": 1, "left": 2, "right": 3}
 
 
-def face_panels(path, background="dark"):
+def face_panels(path, background="dark", im=None):
     """{panel: image} for one face, cut at the scan's own resolution."""
-    exact, padded, _, _ = imaging.straighten(imaging.load(path), background=background)
+    im = im if im is not None else imaging.load(path)
+    exact, padded, _, _ = imaging.straighten(im, background=background)
     margin, cut, strip = imaging._cuts(padded)
     corners = imaging.corner_crops(padded, cut)
     edges = imaging.edge_crops(padded, cut, strip, margin, split=False)
-    out = {"_full": imaging.load(path)}
+    out = {}
     for p, i in _CORNER_INDEX.items():
         out[p] = corners[i][1]
     for p, i in _EDGE_INDEX.items():
@@ -94,11 +95,18 @@ class GradeTab(ttk.Frame):
         self.photos = []
         self.worker = None
         #: What the big canvas shows: the panels, or a whole image.
-        self.view = "panels"
+        self.view = "both"
         #: Zoom is remembered separately for panels and whole images: 2x is
         #: right for a corner and far too big for a whole card.
         self.zooms = {"panels": "2", "full": "Fit"}
         self._resize_job = None
+        #: ONE background loader, working through `_todo` in order — the
+        #: current card first. A thread per image had nine straightening scans
+        #: at once, and the card on screen waited behind the next one's.
+        self._todo = []
+        self._todo_lock = threading.Lock()
+        self._wake = threading.Event()
+        threading.Thread(target=self._loader, daemon=True).start()
 
         self._build_top()
         self._build_view()
@@ -124,7 +132,7 @@ class GradeTab(ttk.Frame):
         ttk.Spinbox(bar, from_=1, to=5, width=3, textvariable=self.pass_var,
                     command=self._goto_first_ungraded).grid(row=0, column=6)
         ttk.Label(bar, text="Zoom").grid(row=0, column=7, padx=(12, 4))
-        self.zoom_var = tk.StringVar(value="2")
+        self.zoom_var = tk.StringVar(value="Fit")
         z = ttk.Combobox(bar, values=("Fit", "1", "2", "3", "4"), width=4, state="readonly",
                          textvariable=self.zoom_var)
         z.grid(row=0, column=8)
@@ -138,10 +146,10 @@ class GradeTab(ttk.Frame):
         view.rowconfigure(2, weight=1)
         views = ttk.Frame(view)
         views.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        self.view_var = tk.StringVar(value="panels")
-        for value, text in (("panels", "Panels (P)"), ("both", "Front + back (S)"),
-                            ("front", "Front (F)"), ("back", "Back (B)"), ("front-crops", "Front crops (C)"),
-                            ("back-crops", "Back crops (C)")):
+        self.view_var = tk.StringVar(value="both")
+        for value, text in (("both", "1 Front + back (S)"), ("front-crops", "2 Front crops (C)"),
+                            ("back-crops", "3 Back crops (C)"), ("panels", "4 Panels (P)"),
+                            ("front", "Front only (F)"), ("back", "Back only (B)")):
             ttk.Radiobutton(views, text=text, value=value, variable=self.view_var,
                             command=lambda: self.set_view(self.view_var.get()))\
                 .pack(side="left", padx=(0, 10))
@@ -288,6 +296,7 @@ class GradeTab(ttk.Frame):
         sku = self.cards[self.index][0]
         self.panel = 0
         self.looked = set()
+        self.set_view("both", redraw=False)
         chk = self.checks.get(sku, {})
         for f in grading.FACES:
             self.points[f].set(chk.get(f"{f}_points") or "0")
@@ -303,8 +312,7 @@ class GradeTab(ttk.Frame):
                                 + ("   GOLDEN — blind" if self.golden else ""))
         self.status.configure(text="")
         self._forget_others()
-        self._request(self.index)
-        self._request(self.index + 1)       # prefetch
+        self._schedule()
         self.redraw()
 
     def _paths(self, i):
@@ -325,54 +333,79 @@ class GradeTab(ttk.Frame):
         keep.update(filter(None, (reference_file(line, k, f) for k in ("clean", "lp")
                                   for f in grading.FACES)))
         for key in list(self.cache):
-            if key not in keep and self.cache[key] is not None:
+            if key not in keep:
                 del self.cache[key]
 
     def _sheets(self, i):
         _, _, _, fc, bc = self.cards[i]
         return {"front-crops": fc, "back-crops": bc}
 
-    def _request(self, i):
+    def _tasks(self, i):
+        """What card `i` needs loaded, quickest to show first."""
         if i >= len(self.cards):
-            return
-        for face, path in self._paths(i).items():
-            if path and path not in self.cache:
-                self.cache[path] = None
-                threading.Thread(target=self._load_face, args=(path,), daemon=True).start()
-        for path in self._sheets(i).values():
-            key = "sheet:" + (path or "")
-            if path and key not in self.cache:
-                self.cache[key] = None
-                threading.Thread(target=self._load_sheet, args=(path,), daemon=True).start()
+            return []
+        faces = [p for p in self._paths(i).values() if p]
+        sheets = [p for p in self._sheets(i).values() if p]
+        return ([("full", p) for p in faces] + [("sheet", p) for p in sheets]
+                + [("panels", p) for p in faces])
+
+    def _ref_tasks(self):
         line = self._line()
-        for kind in ("clean", "lp"):
-            for face in grading.FACES:
-                ref = reference_file(line, kind, face)
-                if ref and ref not in self.cache:
-                    self.cache[ref] = None
-                    threading.Thread(target=self._load_face, args=(ref,), daemon=True).start()
+        refs = [r for r in (reference_file(line, k, f) for k in ("clean", "lp")
+                            for f in grading.FACES) if r]
+        return [("full", r) for r in refs] + [("panels", r) for r in refs]
 
-    def _load_sheet(self, path):
-        try:
-            im = imaging.load(path)
-        except Exception as exc:                              # noqa: BLE001
-            im = exc
-        self.events.put(("face", "sheet:" + path, im))
+    def _done(self, task):
+        kind, path = task
+        if kind == "sheet":
+            return ("sheet:" + path) in self.cache
+        got = self.cache.get(path)
+        if isinstance(got, Exception):
+            return True
+        return isinstance(got, dict) and ("_full" if kind == "full" else "tl") in got
 
-    def _load_face(self, path):
-        try:
-            panels = face_panels(path)
-        except Exception as exc:                              # noqa: BLE001
-            panels = exc
-        self.events.put(("face", path, panels))
+    def _schedule(self):
+        """This card, then the references, then the next card."""
+        tasks = (self._tasks(self.index) + self._ref_tasks()
+                 + self._tasks(self.index + 1))
+        with self._todo_lock:
+            self._todo = [t for t in tasks if not self._done(t)]
+        self._wake.set()
+
+    def _loader(self):
+        while True:
+            self._wake.wait()
+            with self._todo_lock:
+                if not self._todo:
+                    self._wake.clear()
+                    continue
+                kind, path = self._todo.pop(0)
+            try:
+                if kind == "panels":
+                    got = self.cache.get(path)
+                    im = got.get("_full") if isinstance(got, dict) else None
+                    result = face_panels(path, im=im)
+                else:
+                    result = imaging.load(path)
+            except Exception as exc:                          # noqa: BLE001
+                result = exc
+            self.events.put((kind, path, result))
 
     def _poll(self):
         try:
             while True:
                 kind, *rest = self.events.get_nowait()
-                if kind == "face":
-                    path, panels = rest
-                    self.cache[path] = panels
+                if kind in ("full", "panels", "sheet"):
+                    path, result = rest
+                    if kind == "sheet":
+                        self.cache["sheet:" + path] = result
+                    elif isinstance(result, Exception):
+                        self.cache[path] = result
+                    else:
+                        entry = self.cache.get(path)
+                        if not isinstance(entry, dict):
+                            entry = self.cache[path] = {}
+                        entry.update({"_full": result} if kind == "full" else result)
                     self.redraw()
                 elif kind == "ai":
                     self._show_ai(rest[0])
@@ -387,7 +420,7 @@ class GradeTab(ttk.Frame):
 
     # ------------------------------------------------------------ views
 
-    def set_view(self, view):
+    def set_view(self, view, redraw=True):
         if view == self.view:
             return
         kind = lambda v: "panels" if v == "panels" else "full"     # noqa: E731
@@ -395,7 +428,8 @@ class GradeTab(ttk.Frame):
         self.view = view
         self.view_var.set(view)
         self.zoom_var.set(self.zooms[kind(view)])
-        self.redraw()
+        if redraw:
+            self.redraw()
 
     def _zoom_changed(self):
         self.zooms["panels" if self.view == "panels" else "full"] = self.zoom_var.get()
@@ -468,7 +502,7 @@ class GradeTab(ttk.Frame):
         faces = []
         for face in ("front", "back"):
             got = self.cache.get(paths[face])
-            if got is None:
+            if got is None or (isinstance(got, dict) and "_full" not in got):
                 return paths["front"] + "\n" + paths["back"], None
             if isinstance(got, Exception):
                 return paths["front"] + "\n" + paths["back"], got
@@ -524,12 +558,12 @@ class GradeTab(ttk.Frame):
         if not path:
             self._draw(self.canvas, None)
             self.strip.configure(text=f"no {face} image")
-        elif panels is None:
-            self._draw(self.canvas, None)
-            self.strip.configure(text="loading…")
         elif isinstance(panels, Exception):
             self._draw(self.canvas, None)
             self.strip.configure(text=f"could not read: {panels}")
+        elif not isinstance(panels, dict) or panel not in panels:
+            self._draw(self.canvas, None)
+            self.strip.configure(text="loading…")
         else:
             self._draw(self.canvas, panels[panel])
             self.strip.configure(text="")
@@ -538,19 +572,32 @@ class GradeTab(ttk.Frame):
         for kind, canvas in (("clean", self.ref_clean), ("lp", self.ref_lp)):
             ref = reference_file(line, kind, face)
             ref_panels = self.cache.get(ref) if ref else None
-            self._draw(canvas, ref_panels[panel] if isinstance(ref_panels, dict) else None)
+            self._draw(canvas, ref_panels.get(panel) if isinstance(ref_panels, dict) else None)
             if not ref:
                 canvas.create_text(10, 10, anchor="nw", fill="#aaa",
                                    text=f"no {kind} reference —\nput {kind}.jpg in\n"
                                         f"{reference_dir(line)}")
         self.looked_lbl.configure(text=f"panels opened: {len(self.looked)} / 16")
 
+    #: The order → walks a card in: the whole card, each face's crop sheet,
+    #: then the sixteen panels one by one.
+    WALK = ("both", "front-crops", "back-crops", "panels")
+
     def step(self, d):
-        if self.view != "panels":
-            self.set_view("panels")
+        """→ / ←: through WALK, and within the panels, panel by panel."""
+        if self.view == "panels":
+            nxt = self.panel + d
+            if nxt < 0:
+                self.set_view(self.WALK[-2])
+            elif nxt < len(grading.ALL_PANELS):
+                self.panel = nxt
+                self._show_panel()
             return
-        self.panel = (self.panel + d) % len(grading.ALL_PANELS)
-        self._show_panel()
+        at = self.WALK.index(self.view) if self.view in self.WALK else 0
+        nxt = max(0, min(len(self.WALK) - 1, at + d))
+        if self.WALK[nxt] == "panels":
+            self.panel = 0
+        self.set_view(self.WALK[nxt])
 
     # ------------------------------------------------------------ grading
 

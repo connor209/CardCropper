@@ -602,12 +602,13 @@ shrunk — with the same panel of a clean and an LP reference card beside it.
 Put the references in `references/<game line>/clean.jpg` and `lp.jpg` (or
 `clean-front.jpg`, `clean-back.jpg`, …) in the settings folder.
 
-Keys: **1-6** or **N L M H D X** for NM / LP / MP / HP / DMG / HOLD, **→ / ←**
-(or Space / Backspace) through the panels. The whole card is a key away:
-**S** front and back side by side, **F** the full front, **B** the full back,
-**C** the crop sheets (again for the
-back's), **P** back to the panels. Whole images fit the window unless a zoom
-is picked; the panels keep their own zoom. Wear counts are pre-filled from the
+Each card opens on its **front and back side by side**. **→** walks the card in
+order — front + back, the front's crop sheet, the back's crop sheet, then the
+16 panels one by one — and **←** goes back. Or jump: **S** front + back, **C**
+the crop sheets (again for the back's), **P** the panels, **F** or **B** one face
+alone. Keys **1-6** or **N L M H D X** grade it NM / LP / MP / HP / DMG / HOLD.
+Whole images fit the window unless a zoom is picked; the panels keep their
+own zoom. Wear counts are pre-filled from the
 checks. The rules are enforced, not suggested:
 
 - NM needs every panel of both faces opened, none unchecked, and fewer than 3
