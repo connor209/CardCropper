@@ -839,3 +839,15 @@ def front_calibration(line=None, path=None):
                "for triage." if proposed else
                "Not yet good enough to triage by: keep looking at fronts by eye.")
     return head + report + ["", verdict]
+
+
+
+def delete_grade(sku, source, origin="", pass_no="", path=None):
+    """Remove one recorded grade (an undo). The card stays, with any other grades."""
+    db = connect(path)
+    try:
+        db.execute("DELETE FROM grades WHERE sku=? AND source=? AND origin=? AND pass_no=?",
+                   (sku, source, origin or "", str(pass_no or "")))
+        db.commit()
+    finally:
+        db.close()

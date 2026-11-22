@@ -421,6 +421,22 @@ def review_panel_checks(work):
         library.flush()
         check(any(c["sku"] == "KD1" and c["standing"] == "LP" for c in library.cards()),
               "a grade saved on the Condition tab did not reach the library")
+
+        # Ctrl+Z: the row goes back as it was, the library forgets the grade,
+        # and the card is selected again.
+        root.update()
+        tab.panel.undo()
+        root.update()
+        _, rows = read_sheet(tab._review_path())
+        check(rows[0]["grade"] == "" and rows[0]["looked"] == "" and rows[0]["extra"] == "keep me",
+              f"undo did not restore the row: {rows[0]}")
+        library.flush()
+        check(not any(c["sku"] == "KD1" and c["grades"] for c in library.cards()),
+              "undo left the grade in the library")
+        check(tab.panel.rec["sku"] == "KD1", "undo did not go back to the card")
+        from cardcropper import folders
+        check(folders.recent("prepared")[0] == os.path.abspath(out),
+              "an opened batch was not remembered in Recent")
     finally:
         root.destroy()
 
@@ -505,6 +521,42 @@ def watchdog_checks():
           f"freeze report lacks the stuck thread's stack: {text[:300]}")
 
 
+def grade_undo_checks(work):
+    """Undo on the Grade tab takes the grade out of the file and the library."""
+    import tkinter as tk
+    from cardcropper import grading, library, ui
+    from cardcropper.grade_tab import GradeTab
+    os.makedirs(work, exist_ok=True)
+    img = os.path.join(work, "f.jpg")
+    Image.new("RGB", (700, 980), (30, 40, 120)).save(img)
+    picks = os.path.join(work, "picks.csv")
+    with open(picks, "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["id", "front", "back", "front_crops", "back_crops"])
+        w.writeheader()
+        for i in (1, 2):
+            w.writerow({"id": f"GU{i}", "front": img, "back": img})
+    root = tk.Tk()
+    try:
+        ui.apply_theme(root)
+        page = tk.Frame(root)
+        page.pack(fill="both", expand=True)
+        tab = GradeTab(page)
+        tab.load(picks)
+        root.update()
+        tab.grade("LP")
+        library.flush()
+        check(len(grading.read_grades(tab.grades_path)) == 1 and tab.index == 1,
+              "grading did not record and move on")
+        tab.undo()
+        library.flush()
+        check(not grading.read_grades(tab.grades_path), "undo left the grade in the file")
+        check(tab.index == 0, "undo did not go back to the card")
+        check(not any(c["sku"] == "GU1" and c["grades"] for c in library.cards()),
+              "undo left the blind grade in the library")
+    finally:
+        root.destroy()
+
+
 def window_checks():
     """Build the real window, every page, and check its catalogue of tips."""
     try:
@@ -515,6 +567,7 @@ def window_checks():
         return
     root.destroy()
     review_panel_checks(tempfile.mkdtemp(prefix="cc-panel-"))
+    grade_undo_checks(tempfile.mkdtemp(prefix="cc-gundo-"))
     from cardcropper import gui, guide, ui, updater
     import cardcropper.shell as shell_mod
 

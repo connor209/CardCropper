@@ -122,3 +122,25 @@ def save_settings(**changes):
             json.dump(data, fh, indent=2)
     except OSError:
         pass
+
+
+# ------------------------------------------------------------ recent files
+
+RECENT_KEEP = 8
+
+
+def remember(kind, path):
+    """Put `path` at the top of the recent list for `kind` (a page's own name)."""
+    if not path:
+        return
+    path = os.path.abspath(path)
+    data = load_settings().get("recent") or {}
+    items = [p for p in data.get(kind, []) if p != path]
+    data[kind] = [path] + items[:RECENT_KEEP - 1]
+    save_settings(recent=data)
+
+
+def recent(kind):
+    """The recent paths for `kind` that still exist, newest first."""
+    return [p for p in (load_settings().get("recent") or {}).get(kind, [])
+            if os.path.exists(p)]

@@ -120,6 +120,8 @@ class GradeTab(ttk.Frame):
         self._build_view()
         self._build_form()
         self.bind_all("<Key>", self._key, add="+")
+        self.bind_all("<Control-z>", self.undo, add="+")
+        self.undo_stack = []
         self._poll()
 
     # ------------------------------------------------------------ layout
@@ -132,6 +134,8 @@ class GradeTab(ttk.Frame):
         ttk.Label(bar, text="Manifest / golden picks").grid(row=0, column=0, sticky="w")
         ttk.Entry(bar, textvariable=self.src_var).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(bar, text="Open…", command=self.pick).grid(row=0, column=2)
+        from . import ui
+        ui.recent_menu(bar, "grade", self.load).grid(row=0, column=9, padx=(12, 0))
         ttk.Label(bar, text="Grader").grid(row=0, column=3, padx=(12, 4))
         self.grader_var = tk.StringVar(value="Connor")
         ttk.Entry(bar, textvariable=self.grader_var, width=10).grid(row=0, column=4)
@@ -258,8 +262,11 @@ class GradeTab(ttk.Frame):
             self.load(path)
 
     def load(self, path):
+        from . import folders
+        folders.remember("grade", path)
         self.src_var.set(path)
         self.cache.clear()
+        self.undo_stack = []
         if path.lower().endswith(".json"):
             self.batch = batches.read_manifest(path)
             self.golden = False
@@ -691,9 +698,53 @@ class GradeTab(ttk.Frame):
         if self.golden:
             self._write_blind(sku, final)
         self._to_library(sku, a, final, reasons)
-        msg = f"{sku}: {final}" + (f" — {'; '.join(reasons)}" if reasons else "")
+        self.undo_stack.append((sku, self.index, self.pass_var.get()))
+        msg = f"{sku}: {final}" + (f" — {'; '.join(reasons)}" if reasons else "") + \
+            "   (Ctrl+Z undoes)"
         self.go(self.index + 1)
         self.status.configure(text=msg, foreground="#1a7f37" if not reasons else "#8a5a00")
+
+    def undo(self, _e=None):
+        """
+        Ctrl+Z: take back the last grade keyed here — its row in the grades
+        file, its blind-check answer, its grade-library record — and go back
+        to the card to key it again.
+        """
+        if not self.winfo_viewable():
+            return
+        if isinstance(self.focus_get(), (tk.Entry, ttk.Entry)):
+            return
+        if not getattr(self, "undo_stack", None):
+            self.status.configure(text="Nothing to undo.", foreground="#666")
+            return "break"
+        sku, index, pass_no = self.undo_stack.pop()
+        rows = grading.read_grades(self.grades_path)
+        for i in range(len(rows) - 1, -1, -1):
+            r = rows[i]
+            if r["sku"] == sku and str(r.get("pass")) == str(pass_no) and \
+                    r.get("source") != "ai":
+                del rows[i]
+                break
+        import csv
+        with open(self.grades_path, "w", encoding="utf-8", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=grading.GRADE_FIELDS, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+        if self.golden:
+            score = os.path.splitext(self.grades_path)[0] + "-score.csv"
+            kept = [r for r in audits._read(score) if r.get("id") != sku]
+            with open(score, "w", encoding="utf-8", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=["id", "grade"])
+                w.writeheader()
+                w.writerows(kept)
+        from . import library
+        library.flush(5)
+        library.delete_grade(sku, "golden-blind" if self.golden else "grade-tab",
+                             os.path.abspath(self.grades_path or ""), pass_no)
+        self.go(index)
+        self.status.configure(text=f"Undone: {sku}'s pass {pass_no} grade. Key it again.",
+                              foreground="#8a5a00")
+        return "break"
 
     def _to_library(self, sku, a, final, reasons):
         """

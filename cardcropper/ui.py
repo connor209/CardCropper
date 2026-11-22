@@ -626,3 +626,29 @@ def wrap_to_width(label, minimum=200):
             label.configure(wraplength=want)
     label.bind("<Configure>", on)
     return label
+
+
+def recent_menu(parent, kind, on_pick, text="Recent", describe=None):
+    """
+    A menu button listing the files or folders recently opened on a page
+    (folders.recent), newest first, rebuilt each time it is opened. Picking
+    one calls `on_pick(path)`.
+    """
+    import os
+    from . import folders
+    mb = ttk.Menubutton(parent, text=text)
+    menu = tk.Menu(mb, tearoff=False)
+
+    def fill():
+        menu.delete(0, "end")
+        items = folders.recent(kind)
+        if not items:
+            menu.add_command(label="Nothing opened here yet", state="disabled")
+        for p in items:
+            label = describe(p) if describe else \
+                f"{os.path.basename(p) or p}   —   {os.path.dirname(p)}"
+            menu.add_command(label=label, command=lambda p=p: on_pick(p))
+    menu.configure(postcommand=fill)
+    mb.configure(menu=menu)
+    tip(mb, "Open one of the files opened here recently.")
+    return mb

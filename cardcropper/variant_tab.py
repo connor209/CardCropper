@@ -72,6 +72,8 @@ class VariantTab(ttk.Frame):
         ttk.Label(bar, text="Job data (JSON)").grid(row=0, column=0)
         ttk.Entry(bar, textvariable=self.src_var).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(bar, text="Open…", command=self.pick).grid(row=0, column=2)
+        from . import ui
+        ui.recent_menu(bar, "variants", self.load).grid(row=0, column=4, padx=(6, 0))
         ttk.Button(bar, text="Write change file", command=self.write_changes)\
             .grid(row=0, column=3, padx=(8, 0))
 
@@ -125,6 +127,8 @@ class VariantTab(ttk.Frame):
             self.load(path)
 
     def load(self, path):
+        from . import folders
+        folders.remember("variants", path)
         self.src_var.set(path)
         self.job_path = path
         self.job = variants.load_job(path)

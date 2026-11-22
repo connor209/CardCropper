@@ -536,6 +536,11 @@ class PricesTab(ttk.Frame):
                                                      ("JSON", "*.json")])
         if not path:
             return
+        self.open_priced_file(path)
+
+    def open_priced_file(self, path):
+        from . import folders
+        folders.remember("priced", path)
         with open(path, encoding="utf-8") as fh:
             priced = [pricing.Priced(**d) for d in json.load(fh)]
         self.events.put(("ok", (priced, {}, {}, f"{len(priced)} card(s) from {path}")))

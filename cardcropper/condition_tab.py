@@ -130,7 +130,7 @@ class ConditionTab(ttk.Frame):
         wrap.rowconfigure(0, weight=1)
         pane.add(wrap, weight=3)
         self.panel = ReviewPanel(pane, out_dir=lambda: self.out_var.get().strip(),
-                                 on_saved=self._graded_here)
+                                 on_saved=self._graded_here, on_undone=self._ungraded_here)
         pane.add(self.panel, weight=2)
 
         # The table asks for every column's width and would squeeze the panel
@@ -169,7 +169,9 @@ class ConditionTab(ttk.Frame):
         box = ttk.LabelFrame(self, text="After grading conditioning-review.csv", padding=8)
         box.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         ttk.Button(box, text="Open prepared batch…",
-                   command=self.open_prepared).pack(side="left", padx=(0, 6))
+                   command=self.open_prepared).pack(side="left")
+        from . import ui
+        ui.recent_menu(box, "prepared", self.open_prepared).pack(side="left", padx=(2, 6))
         ttk.Button(box, text="Open review sheet",
                    command=self.open_review).pack(side="left")
         #: Set by the window: check this batch's scans against the catalogue.
@@ -387,12 +389,28 @@ class ConditionTab(ttk.Frame):
         left = sum(1 for r in self.records if not self.grades.get(r["sku"]))
         self._say(f"{sku}: {grade}  ({left} card(s) still to grade)")
 
+    def _ungraded_here(self, sku, grade):
+        """After an undo in the panel: show the card again, with its old grade."""
+        if grade:
+            self.grades[sku] = grade
+        else:
+            self.grades.pop(sku, None)
+        for iid, rec in self.by_row.items():
+            if rec["sku"] == sku:
+                self.tree.set(iid, "grade", grade)
+                self.tree.selection_set(iid)
+                self.tree.see(iid)
+                self.tree.focus(iid)
+                break
+
     def open_prepared(self, folder=None):
         """A batch prepared earlier: its triage.csv, ranked as it was, ready to grade."""
         folder = folder or filedialog.askdirectory(title="A prepared batch's output folder "
                                                          "(the one holding triage.csv)")
         if not folder:
             return
+        from . import folders
+        folders.remember("prepared", folder)
         path = os.path.join(folder, "triage.csv")
         if not os.path.exists(path):
             messagebox.showinfo(APP_NAME, "No triage.csv in that folder — choose the output "

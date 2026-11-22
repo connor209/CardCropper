@@ -428,6 +428,7 @@ Grade
   1-6  or  N L M H D X     NM / LP / MP / HP / DMG / HOLD
   → ←  (Space Backspace)   walk the card: both faces, crop sheets, the 16 panels
   S  C  P  F  B            both faces · crop sheets · panels · front · back
+  Ctrl+Z                   undo the last grade keyed (back to that card)
 
 Variants
   C  S  X                  correct · switch · HOLD
@@ -435,6 +436,7 @@ Variants
 Condition a CSV (table selected)
   1-6                      pick NM / LP / MP / HP / DMG / HOLD
   Enter                    save the grade and move to the next card
+  Ctrl+Z                   undo the last save (the row goes back as it was)
 
 Market
   Enter                    search sold listings

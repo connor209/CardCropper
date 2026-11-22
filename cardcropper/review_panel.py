@@ -33,6 +33,8 @@ FILES = {"corners": ("corners-back.jpg",), "back": ("crops-back.jpg",),
 PHRASES = ("whitening on back corners", "back edge whitening", "front edge wear",
            "corner wear", "surface scratches", "print line", "dent", "crease",
            "off-centre")
+#: The review-sheet columns a save changes, and an undo puts back.
+UNDO_FIELDS = ("grade", "flaw_note", "confidence", "looked", "evidence")
 KEYS = {"1": "NM", "2": "LP", "3": "MP", "4": "HP", "5": "DMG", "6": "HOLD"}
 PREVIEW = (360, 240)
 
@@ -69,10 +71,13 @@ class ReviewPanel(ttk.Frame):
     called after a save (the tab moves to the next card and updates its row).
     """
 
-    def __init__(self, master, out_dir, on_saved=None):
+    def __init__(self, master, out_dir, on_saved=None, on_undone=None):
         super().__init__(master, padding=(12, 0, 0, 0))
         self.out_dir = out_dir
         self.on_saved = on_saved
+        self.on_undone = on_undone
+        self.undo_stack = []
+        self.bind_all("<Control-z>", self.undo, add="+")
         self.rec = None
         self.photos = []
         self.view = tk.StringVar(value="corners")
@@ -147,6 +152,39 @@ class ReviewPanel(ttk.Frame):
         self.pic.bind("<Configure>", lambda _e: self._draw())
 
     # ------------------------------------------------------------ showing
+
+    def undo(self, _e=None):
+        """
+        Ctrl+Z: put the last saved card's row of the review sheet back as it
+        was, take its grade out of the grade library (or put the old one
+        back), and return to the card.
+        """
+        if not self.winfo_viewable() or not self.undo_stack:
+            return
+        if isinstance(self.focus_get(), (tk.Entry, ttk.Entry)):
+            return
+        sku, path, before, rec = self.undo_stack.pop()
+        try:
+            write_row(path, sku, before)
+        except PermissionError:
+            self.undo_stack.append((sku, path, before, rec))
+            self.status.configure(foreground=ui.C["bad"],
+                                  text="Could not undo: the review sheet is open in another "
+                                       "program. Close it there and press Ctrl+Z again.")
+            return "break"
+        library.flush(5)
+        library.delete_grade(sku, "review-sheet", os.path.abspath(path), "")
+        old = (before.get("grade") or "").upper()
+        if old in grading.GRADES:
+            library.record_later(sku, old, "review-sheet", origin=os.path.abspath(path),
+                                 card=rec.get("title", ""), notes=before.get("flaw_note", ""),
+                                 confidence=before.get("confidence", ""), looked="yes")
+        if self.on_undone:
+            self.on_undone(sku, old)
+        self.status.configure(foreground=ui.C["warn"],
+                              text=f"Undone: {sku} is back to "
+                                   f"{old or 'ungraded'}. Grade it again.")
+        return "break"
 
     def _folder(self):
         return os.path.join(self.out_dir(), "cards", conditioning.safe_name(self.rec["sku"]))
@@ -279,6 +317,10 @@ class ReviewPanel(ttk.Frame):
                                        "first.")
             return
         sku = self.rec["sku"]
+        _, rows = read_sheet(path)
+        before = next((r for r in rows if (r.get("sku") or "").strip() == sku), {})
+        self.undo_stack.append((sku, path, {k: before.get(k, "") for k in UNDO_FIELDS},
+                                dict(self.rec)))
         try:
             write_row(path, sku, {"grade": g, "flaw_note": note,
                                   "confidence": self.conf_var.get(), "looked": "yes",
@@ -306,7 +348,7 @@ class ReviewPanel(ttk.Frame):
                 border_base=_float(self.rec.get("border_base")),
                 front_worst_corner_pct=_float(self.rec.get("front_worst_corner_pct")),
                 front_wear_total_pct=_float(self.rec.get("front_wear_total_pct")))
-        self.status.configure(foreground=ui.C["ok"], text=f"Saved {sku}: {g}")
+        self.status.configure(foreground=ui.C["ok"], text=f"Saved {sku}: {g}   (Ctrl+Z undoes)")
         if self.on_saved:
             self.on_saved(sku, g)
 
