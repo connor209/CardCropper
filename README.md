@@ -177,12 +177,21 @@ straight to a card's sold prices or catalogue entry.
 | **2 · Grade** | **Condition a CSV** (rank an export by wear, and grade it beside the ranking), **Grade** (card by card, panel by panel), **Grade library** (every hand grade, and the golden sets) |
 | **3 · List & price** | **Variants**, **Card lookup** (catalogue, printings, scan matching), **Market** (eBay sold listings), **Batch & price** |
 
+**Batches** (under Home) lists every batch under a folder you choose, with a
+column per stage — batched (and crop-check HOLDs), graded, variants decided,
+priced (and whether the run report is READY), change file — read off the
+files each step writes, so it is always current. **Go to: <next step>** opens
+the page that step happens on with the batch's own file loaded. Pages that
+open files have a **Recent** menu beside **Open…**.
+
 Every page says in one line what it is for, and has a step-by-step guide
 under **Guide ▾** (F1). **Hover over any control** for what it does — and, for
 one that is greyed out, what it is waiting for. Each page has one primary
 action in blue; the actions used now and then are behind its **More** menu.
 
-Keys: **Ctrl+1…9** jump between pages in sidebar order, **Ctrl+0** goes Home,
+Keys: **Ctrl+1…9** jump between pages in sidebar order (Ctrl+1 is Batches),
+**Ctrl+0** goes Home, **Ctrl+Z** undoes the last grade on the Grade tab or the
+Condition panel,
 **Ctrl+B** hides the sidebar, **Ctrl+,** opens the settings folder.
 **Help → Keyboard shortcuts** lists every page's keys. The **Tools** menu
 holds the Comp Finder login, importing grades into the library, and the
@@ -705,6 +714,19 @@ made before the library existed (every `grades-*.csv` and
 `conditioning-review.csv` under a folder; safe to run twice), and **Re-read
 golden-set files** picks up cards added to a golden file by hand.
 
+**Blind checks** (menu on the Grade library page): **Start a blind check…**
+picks 10 cards (3+ borderline) from the line in the filter and opens them on
+the Grade tab — the pick list holds only the scans, never the answers.
+**Score a blind check…** compares the grades with the in-hand truth: STOP on
+any overgrade or ungraded card, PASS otherwise; the result goes in the audit
+log and each disagreement in the error log. **How graders are doing…** gives
+each grader's blind-check matches, overgrades and undergrades, and how often
+their passes agreed with the grade that stood. **Does the front score work
+yet?…** — Prepare now measures the front border too (`front_*` columns in
+triage.csv), recorded with each grade but never used to triage; this runs the
+same conservative fit as the back's on the front figures and says whether
+they separate the grades.
+
 The Grade tab and the Condition panel show the library's advice beside each
 card — "graded cards with these back counts: LP 5, MP 1" — once it has enough
 cards. It is advice from your own past grades, never a pre-selected grade,
@@ -797,8 +819,23 @@ counts them — for Japanese and other non-English cards, or anything that sells
 the same in any language. Every other check still applies: graded slabs,
 other printings and lots stay out. Switching re-prices what is on screen from
 the sales already found, without searching again, and the choice is
-remembered (and kept with each search in History). Batch & price is
-unchanged: it still prices English sales only.
+remembered (and kept with each search in History). Batch & price has the same choice: **Count every language** (`--cli price
+--all-languages`); its prices are recorded apart from English-only ones, so
+neither run reuses the other's.
+
+**Use this price…** keeps a price for the card at that condition (the one on
+screen, a what-if, or one typed in). For 14 days **Batch & price** uses it for
+that card instead of working one out, as method *your price* in the report.
+
+**Trend and watch list.** Under the card, its price at its first and latest
+saved search. **☆ Watch** adds it to the **Watch list** tab: watched cards are
+searched again together — on demand, or by themselves once a week when the
+app opens signed in — and each shows how far it moved, green or red when it
+moved by more than one ladder step and by 20% or £2.
+
+**Reference prices.** Under the card, the catalogue's TCGplayer (USD) and
+Cardmarket (EUR) prices for the card its title finds — a cross-check, worth
+most when UK sales are few.
 
 **History** keeps every search with the listings it found (`market.sqlite` in
 the settings folder), so a card can be looked at again later without
@@ -843,6 +880,13 @@ key in `POKEMONTCG_API_KEY` raises its rate limit.) For each candidate:
   scans;
 - **Price this on eBay** sends the card to the Market page.
 
+**More → Check a whole batch…** (or **Check against catalogue…** on Condition
+a CSV) does this for every card of a prepared batch: each title is searched,
+each front scan compared with what comes back, and the cards whose scan does
+not look like their title — a wrong match, a mistyped title, scans paired
+with the wrong card — are listed first as MISMATCH, then *check*, then *ok*.
+Double-click one to open it in Card lookup with its scan matched.
+
 ### 6. Push to CardUploader (`--cli changes`, then the extension)
 
 **Write change file** gathers the condition changes (from the grades, after
@@ -877,6 +921,17 @@ CardCropper.exe --cli condition export.csv --out batch-GA --limit 10 --upload
 CardCropper.exe --cli calibrate --review batch-GA\conditioning-review.csv [--adopt]
 CardCropper.exe --cli apply export.csv --review batch-GA\conditioning-review.csv
 ```
+
+## Backups
+
+Everything the app learns lives in the settings folder — the grade library,
+golden sets, market history and chosen prices, the price register,
+calibration, the condition map. Once a week, when the app opens, it zips that
+folder into `backups/` inside it, keeping the newest 8; **File → Back up
+settings…** writes one wherever you choose (a USB stick, a synced folder).
+Databases are copied with SQLite's own backup so a copy is never taken
+mid-write; caches that rebuild themselves are left out. To restore, close the
+app and unzip a backup over the settings folder.
 
 ## If the window stops responding
 

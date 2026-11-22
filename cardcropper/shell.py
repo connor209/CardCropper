@@ -189,6 +189,8 @@ class Shell:
         file = tk.Menu(bar, tearoff=False)
         file.add_command(label="Open settings folder", accelerator="Ctrl+,",
                          command=self.open_settings)
+        file.add_command(label="Back up settings…", command=self.backup_now)
+        file.add_command(label="Open backups folder", command=self.open_backups)
         file.add_separator()
         file.add_command(label="Exit", command=self.root.destroy)
         bar.add_cascade(label="File", menu=file)
@@ -252,6 +254,31 @@ class Shell:
         os.makedirs(watchdog.folder(), exist_ok=True)
         watchdog.mark_seen()
         _reveal(watchdog.folder())
+
+    def backup_now(self):
+        """Zip the settings folder — grade library, golden sets, market, register…"""
+        from tkinter import filedialog, messagebox
+        from . import backup
+        stamp = __import__("datetime").date.today().isoformat()
+        dest = filedialog.asksaveasfilename(
+            title="Back up CardCropper's settings to…", defaultextension=".zip",
+            initialfile=f"cardcropper-settings-{stamp}.zip", filetypes=[("Zip", "*.zip")])
+        if not dest:
+            return
+        try:
+            path = backup.make(dest)
+        except Exception as exc:                            # noqa: BLE001
+            messagebox.showerror("Back up settings", f"The backup failed: {exc}")
+            return
+        messagebox.showinfo("Back up settings", f"Saved {path}\n\nTo restore: close the "
+                                                "app and unzip it over the settings folder "
+                                                "(File → Open settings folder).")
+
+    def open_backups(self):
+        from . import backup
+        from .gui import _reveal
+        os.makedirs(backup.backup_dir(), exist_ok=True)
+        _reveal(backup.backup_dir())
 
     def about(self):
         from . import updater

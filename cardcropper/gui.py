@@ -962,6 +962,9 @@ def main():
     # Asked a moment after the window is up, so a slow network never holds it
     # back, and never while something is running — updating restarts the app.
     root.after(1500, lambda: updater.offer(root, is_busy=busy))
+    # The settings folder backs itself up once a week, in the background.
+    from . import backup
+    root.after(6000, lambda: backup.auto())
     # The watch list checks itself once a week, in the background.
     root.after(4000, prices.auto_check_watch)
     root.mainloop()

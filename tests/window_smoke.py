@@ -511,6 +511,39 @@ def compfinder_checks():
           "sign-out left the session behind")
 
 
+def backup_checks():
+    """The weekly backup: every database copied consistently, caches left out."""
+    import sqlite3 as _sq
+    import zipfile as _zf
+    from cardcropper import backup, library
+    library.record("BK1", "NM", "grade-tab", origin="b")
+    cache = os.path.join(backup.settings_dir(), "catalog-cache")
+    os.makedirs(cache, exist_ok=True)
+    with open(os.path.join(cache, "x.json"), "w") as fh:
+        fh.write("{}")
+    check(backup.due(), "no backup yet, so one is due")
+    path = backup.make()
+    with _zf.ZipFile(path) as z:
+        names = z.namelist()
+        check(library.DB_NAME in names, f"grade library missing from the backup: {names}")
+        check(not any(n.startswith("catalog-cache") or n.startswith("backups")
+                      or n.endswith(("-wal", "-shm")) for n in names),
+              f"caches or side files backed up: {names}")
+        out = os.path.join(tempfile.mkdtemp(), "lib.sqlite")
+        with open(out, "wb") as fh:
+            fh.write(z.read(library.DB_NAME))
+    db = _sq.connect(out)
+    check(db.execute("SELECT COUNT(*) FROM grades WHERE sku='BK1'").fetchone()[0] == 1,
+          "the backed-up library lost a grade still in its write-ahead log")
+    db.close()
+    check(not backup.due(), "just backed up, so not due")
+    for _ in range(backup.KEEP + 2):
+        backup.make(os.path.join(backup.backup_dir(),
+                                 f"cardcropper-settings-0{_:02d}.zip"))
+    backup.prune()
+    check(len(backup.backups()) == backup.KEEP, "old backups not pruned")
+
+
 def watchdog_checks():
     """A freeze leaves a file saying where every thread was."""
     from cardcropper import watchdog
@@ -642,6 +675,7 @@ def main():
         pipeline_checks(work)
         market_checks(work)
         watchdog_checks()
+        backup_checks()
         window_checks()
     finally:
         for k, v in old.items():
