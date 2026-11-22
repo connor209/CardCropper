@@ -312,6 +312,34 @@ def japanese_checks():
           r[0].prices)
 
 
+def fallback_checks():
+    """pokemontcg.io down (HTTP 500): English cards still come back, from TCGdex."""
+    def get(url, headers):
+        if "pokemontcg" in url:
+            raise OSError("HTTP Error 500: Internal Server Error")
+        if "/en/cards?" in url:
+            return [{"id": "sv10.5b-003", "name": "Serperior ex"},
+                    {"id": "sv10.5b-156", "name": "Serperior ex"}]
+        cid = url.rsplit("/", 1)[1]
+        return {"id": cid, "localId": cid.rsplit("-", 1)[1], "name": "Serperior ex",
+                "image": f"https://assets.tcgdex.net/en/sv/sv10.5b/{cid[-3:]}",
+                "set": {"id": "sv10.5b", "name": "Black Bolt",
+                        "cardCount": {"official": 86}},
+                "variants_detailed": [{"type": "holo",
+                                       "thirdParty": {"cardmarket": 835908}}]}
+    r = catalog.search("serperior ex fallback-test", get=get)
+    check(r and r[0].set_name == "Black Bolt" and r[0].ids == {"holo": 835908}
+          and "unavailable" in r.query, f"no fallback to TCGdex: {r.query} {r}")
+
+    def both_down(url, headers):
+        raise OSError("HTTP Error 500: Internal Server Error")
+    try:
+        catalog.search("nothing-cached-here 999", get=both_down)
+        raise AssertionError("with both catalogues down the error should be shown")
+    except OSError:
+        pass
+
+
 def ebay_checks():
     url = catalog.ebay_sold_url("Pikachu 58/102 Base Set & co")
     check(url.startswith("https://www.ebay.co.uk/sch/i.html?"), url)
@@ -339,6 +367,7 @@ def main():
         image_checks()
         ebay_checks()
         japanese_checks()
+        fallback_checks()
         batch_checks(tempfile.mkdtemp(prefix="cc-batch-"))
         check(catalog.clear_cache() > 0 and not os.listdir(work), "cache cleared")
     finally:

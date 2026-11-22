@@ -791,7 +791,69 @@ def search(text, game="auto", limit=30, get=None):
     parts["game"] = g
     if g == "yugioh":
         return search_yugioh(parts, limit, get)
-    return search_pokemon(parts, limit, get)
+    # pokemontcg.io is often down (HTTP 500s for minutes at a time); TCGdex
+    # has the same English cards, with their Cardmarket ids. Either way the
+    # person gets an answer.
+    try:
+        res = search_pokemon(parts, limit, get)
+        failed = None
+    except Exception as exc:                                # noqa: BLE001
+        res, failed = Results([], "", parts), exc
+    if res:
+        return res
+    try:
+        alt = search_tcgdex_en(parts, get=get)
+    except Exception:                                       # noqa: BLE001
+        alt = Results([], "", parts)
+    if alt or failed is None:
+        if failed is not None:
+            alt.query += " — pokemontcg.io unavailable, answered from TCGdex"
+        return alt
+    raise failed
+
+
+def search_tcgdex_en(parts, limit=12, get=None):
+    """English Pokémon cards from TCGdex: by name (contains), number and set."""
+    name = (parts.get("name") or "").strip()
+    if not name:
+        return Results([], "", parts)
+    number = str(parts.get("number") or "")
+    m = re.match(r"^(.*?)\s+0*(\d{1,3})$", name)
+    if m and not number:            # "Serperior ex 156": a number with no /total
+        name, number = m.group(1), m.group(2)
+    queries = [{"name": name}]
+    if number:
+        queries = [{"name": name, "localId": n} for n in dict.fromkeys(
+            [number, number.zfill(3)])] + queries
+    rows = []
+    for q in queries:
+        got = fetch_json(f"{TCGDEX}/en/cards?" + urllib.parse.urlencode(q), get=get)
+        rows = got if isinstance(got, list) else []
+        if rows:
+            break
+    # Exact name first ("Serperior ex" before "Serperior ex & …").
+    rows.sort(key=lambda r: r.get("name", "").lower() != name.lower())
+    want_set = (parts.get("set_name") or "").lower()
+    total = parts.get("total")
+    cards = []
+    for r in rows[:limit * 2]:
+        d = fetch_json(f"{TCGDEX}/en/cards/{urllib.parse.quote(r['id'])}", get=get,
+                       max_age=2 * 86400)
+        if not isinstance(d, dict) or not d.get("id"):
+            continue
+        st = d.get("set") or {}
+        if total and (st.get("cardCount") or {}).get("official") not in (None, total):
+            continue
+        c = normalise_tcgdex(d)
+        c.set_name = st.get("name", "")
+        if want_set and want_set not in c.set_name.lower() and len(cards) >= limit:
+            continue
+        cards.append(c)
+        if len(cards) >= limit:
+            break
+    if want_set:
+        cards.sort(key=lambda c: want_set not in c.set_name.lower())
+    return Results(cards, f"TCGdex: {name}" + (f" {number}" if number else ""), parts)
 
 
 # ---------------------------------------------------------------- variants
