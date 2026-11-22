@@ -882,7 +882,7 @@ def main():
                "Which build this is. A copy run from source never updates itself.")
 
     def status():
-        from . import library, pricing
+        from . import library
         try:
             st = library.stats()
             sh_.status("library", f"★ {st['cards']} graded · "
@@ -891,8 +891,8 @@ def main():
                        "Click to open it.", command=lambda: sh_.show("library"))
         except Exception:                                   # noqa: BLE001
             pass
-        on = bool(pricing.comp_finder_cookie())
-        sh_.status("cf", "Comp Finder: logged in" if on else "Comp Finder: not logged in",
+        from . import market
+        sh_.status("cf", market.LOGIN_TEXT[market.login_state()],
                    "Sold-listing searches go through Comp Finder. Click to set the login.",
                    command=lambda: (sh_.show("prices"), prices.set_login()))
     sh_.on_status = status

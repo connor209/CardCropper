@@ -67,6 +67,48 @@ def clean_query(title):
     return re.sub(r"\s+", " ", t).strip()
 
 
+# ---------------------------------------------------------------- Comp Finder login
+
+_AUTH = re.compile(r"not signed in|sign in|signed out|log ?in|unauthori[sz]ed|forbidden|"
+                   r"session|cookie|HTTP 40[13]", re.I)
+
+
+def is_login_error(exc):
+    """Whether Comp Finder refused a search because the saved login is not accepted."""
+    return isinstance(exc, pricing.CompFinderError) and bool(_AUTH.search(str(exc)))
+
+
+def _fingerprint(cookie):
+    import hashlib
+    return hashlib.sha1(cookie.encode("utf-8")).hexdigest()[:16] if cookie else ""
+
+
+def login_state():
+    """
+    'none' (no login saved), 'rejected' (Comp Finder refused the saved one —
+    usually an expired session) or 'saved'. A cookie being on disk does not
+    mean Comp Finder still accepts it, so a refusal is remembered against that
+    cookie, and forgotten the moment a different one is saved.
+    """
+    from . import folders
+    cookie = pricing.comp_finder_cookie()
+    if not cookie:
+        return "none"
+    if folders.load_settings().get("comp_finder_rejected") == _fingerprint(cookie):
+        return "rejected"
+    return "saved"
+
+
+def mark_login(rejected):
+    from . import folders
+    folders.save_settings(comp_finder_rejected=_fingerprint(pricing.comp_finder_cookie())
+                          if rejected else "")
+
+
+LOGIN_TEXT = {"none": "Comp Finder: no login", "saved": "Comp Finder: login saved",
+              "rejected": "Comp Finder: login expired"}
+
+
 # ---------------------------------------------------------------- figures
 
 

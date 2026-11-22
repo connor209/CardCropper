@@ -151,6 +151,26 @@ def market_checks(work):
     check(len(got) == 2 and got[0]["price"] == 4.2 and got[0]["postage"] == 0.85
           and got[0]["date"] == "2026-11-05" and got[1]["price"] == 1004.0,
           f"CSV sales read wrong: {got} ({note})")
+    # Comp Finder's bare "Not signed in." is a login that has expired: it is
+    # recognised, remembered against that cookie, and forgotten for a new one.
+    check(market.is_login_error(pricing.CompFinderError("Not signed in.")),
+          "'Not signed in.' not recognised as a login problem")
+    check(market.is_login_error(pricing.CompFinderError("Comp Finder: HTTP 401")),
+          "HTTP 401 not recognised as a login problem")
+    check(not market.is_login_error(pricing.CompFinderError("rate limited, try later")),
+          "an unrelated Comp Finder error taken for a login problem")
+    check(market.login_state() == "none", "no cookie should read as no login")
+    os.makedirs(os.path.dirname(pricing.cookie_path()), exist_ok=True)
+    with open(pricing.cookie_path(), "w", encoding="utf-8") as fh:
+        fh.write("session=old")
+    check(market.login_state() == "saved", "a saved cookie should read as saved")
+    market.mark_login(rejected=True)
+    check(market.login_state() == "rejected", "a refused login was not remembered")
+    with open(pricing.cookie_path(), "w", encoding="utf-8") as fh:
+        fh.write("session=fresh")
+    check(market.login_state() == "saved", "a fresh cookie should clear the refusal")
+    os.remove(pricing.cookie_path())
+
     url = market.ebay_sold_url("Lugia 78/124 Fates Collide Pokemon NM")
     check("LH_Sold=1" in url and "Pokemon" not in url and "NM" not in url,
           f"sold search URL wrong: {url}")

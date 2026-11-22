@@ -130,8 +130,11 @@ class PricesTab(ttk.Frame):
                     "or a sheet, and the Comp Finder login.")
         more.grid(row=0, column=6, padx=(6, 0))
 
-        self.status = ttk.Label(self, style="Muted.TLabel")
-        self.status.grid(row=1, column=0, sticky="w", pady=(6, 4))
+        self.status = ttk.Label(self, style="Muted.TLabel", justify="left")
+        self.status.grid(row=1, column=0, sticky="ew", pady=(6, 4))
+        # Wrapped to the window, so a long message is read whole, not cut off.
+        self.status.bind("<Configure>", lambda e: self.status.configure(
+            wraplength=max(200, e.width - 4)))
         self._login_hint()
 
     def _build_body(self):
@@ -312,8 +315,12 @@ class PricesTab(ttk.Frame):
                 kind, payload = self.events.get_nowait()
                 if kind == "err":
                     self.search_btn.configure(state="normal")
-                    msg = f"{payload}" if isinstance(payload, pricing.CompFinderError) \
-                        else f"{type(payload).__name__}: {payload}"
+                    if market.is_login_error(payload):
+                        self._login_refused(payload)
+                        continue
+                    msg = f"Comp Finder: {payload}" if isinstance(
+                        payload, pricing.CompFinderError) else \
+                        f"{type(payload).__name__}: {payload}"
                     self.status.configure(text=msg, foreground=ui.C["bad"])
                 elif kind == "pic":
                     key, img = payload
@@ -330,8 +337,34 @@ class PricesTab(ttk.Frame):
             pass
         self.after(150, self._poll)
 
+    def _login_refused(self, exc):
+        """
+        Comp Finder answered, but would not take the saved login — almost
+        always a session that has expired. Say so in words, and offer the fix
+        and the way round it, rather than passing on its bare "Not signed in."
+        """
+        market.mark_login(rejected=True)
+        self.status.configure(
+            foreground=ui.C["bad"],
+            text=f"Comp Finder did not accept your saved login (it said: “{exc}”). The "
+                 "session has probably expired — paste a fresh cookie (More → Comp Finder "
+                 "login…). eBay ↗ still opens the sold listings in your browser.")
+        if messagebox.askyesno(
+                "Comp Finder login expired",
+                f"Comp Finder said: “{exc}”\n\nYour saved login is no longer accepted — "
+                "sessions expire after a while. Sign in to Comp Finder in your browser, "
+                "copy a fresh cookie, and paste it in.\n\nPaste a new login now?\n\n"
+                "(No: use eBay ↗ to see the sold listings in your browser instead.)"):
+            self.set_login(retry=True)
+
     def _login_hint(self):
-        if not pricing.comp_finder_cookie():
+        state = market.login_state()
+        if state == "rejected":
+            self.status.configure(
+                text="Comp Finder no longer accepts your saved login — paste a fresh one "
+                     "(More → Comp Finder login…). eBay ↗ works without it.",
+                foreground=ui.C["warn"])
+        elif state == "none":
             self.status.configure(
                 text="Not logged in to Comp Finder — searching needs it (More → Comp Finder "
                      "login…). History, imported sales and eBay ↗ work without it.",
@@ -428,7 +461,7 @@ class PricesTab(ttk.Frame):
         market.save_search(title, ev, p, self._game(), self.cond_var.get(), source="csv")
         self.events.put(("ok", ([p], {}, {"imported": ev}, note)))
 
-    def set_login(self):
+    def set_login(self, retry=False):
         """Paste the Comp Finder session cookie into its file — no setx, no truncation."""
         top = tk.Toplevel(self)
         top.title("Comp Finder login")
@@ -451,8 +484,11 @@ class PricesTab(ttk.Frame):
             with open(pricing.cookie_path(), "w", encoding="utf-8") as fh:
                 fh.write(text)
             top.destroy()
+            market.mark_login(rejected=False)
             self.status.configure(text="Comp Finder login saved." if text else
                                   "Comp Finder login cleared.", foreground=ui.C["ok"])
+            if retry and text and self.title_var.get().strip():
+                self.lookup()
         row = ttk.Frame(f)
         row.pack(fill="x", pady=(10, 0))
         ttk.Button(row, text="Save", style="Accent.TButton", command=save).pack(side="right")

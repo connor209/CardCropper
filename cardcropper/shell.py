@@ -390,7 +390,7 @@ class HomePage(ttk.Frame):
                                                    pady=(18, 0))
 
     def on_show(self):
-        from . import library, market, pricing
+        from . import library, market
         try:
             st = library.stats()
             self.figures["graded"].set(str(st["cards"]), "  ·  ".join(
@@ -406,10 +406,11 @@ class HomePage(ttk.Frame):
             self.figures["searches"].set(str(len(market.history(limit=10000))), "")
         except Exception:                                   # noqa: BLE001
             pass
-        on = bool(pricing.comp_finder_cookie())
-        self.figures["login"].set("Logged in" if on else "Not set",
-                                  "" if on else "Market → More → Comp Finder login…",
-                                  colour=ui.C["ok"] if on else ui.C["warn"])
+        state = market.login_state()
+        self.figures["login"].set(
+            {"saved": "Login saved", "none": "Not set", "rejected": "Expired"}[state],
+            "" if state == "saved" else "Market → More → Comp Finder login…",
+            colour={"saved": ui.C["ok"], "none": ui.C["warn"], "rejected": ui.C["bad"]}[state])
 
     def search_prices(self):
         q = self.query.get().strip()
