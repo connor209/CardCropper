@@ -245,15 +245,14 @@ class PricesTab(ttk.Frame):
         # Right: one card in depth.
         right = ttk.Frame(pane, padding=(10, 0, 0, 0))
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(3, weight=1)
+        right.rowconfigure(4, weight=1)
         head = ttk.Frame(right)
         head.grid(row=0, column=0, sticky="ew")
         head.columnconfigure(0, weight=1)
         self.card_title = ttk.Label(head, style="Heading.TLabel", text="Search for a card",
                                     wraplength=620, justify="left")
         self.card_title.grid(row=0, column=0, sticky="w")
-        self.chosen_lbl = ttk.Label(head, style="Ok.TLabel")
-        self.chosen_lbl.grid(row=1, column=0, sticky="w")
+        self.chosen_lbl = ttk.Label(head, style="Ok.TLabel")       # shown as a box now
         self.use_btn = ttk.Button(head, text="Use this price…", command=self.use_price,
                                   state="disabled")
         self.use_btn.grid(row=0, column=2, rowspan=2, sticky="e")
@@ -262,17 +261,10 @@ class PricesTab(ttk.Frame):
         self.watch_btn.grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 6))
         ui.tip(self.watch_btn, "Add this card to the watch list: checked again every week, "
                                "and flagged when its price moves.")
-        self.trend_lbl = ttk.Label(head, style="Muted.TLabel")
-        self.trend_lbl.grid(row=2, column=0, sticky="w")
-        self.ref_lbl = ttk.Label(head, style="Muted.TLabel", justify="left")
-        self.ref_lbl.grid(row=3, column=0, columnspan=3, sticky="ew")
-        ui.wrap_to_width(self.ref_lbl)
-        ui.tip(self.ref_lbl, "Reference prices for the card its title finds: Cardmarket's own "
-                             "price guide (euros, downloaded daily) and TCGplayer (US). Not "
-                             "eBay UK — a cross-check, worth most when there are few UK "
-                             "sales. 'check' means the card has same-named versions in its "
-                             "set; 'unsure' that its set was a close match.")
+        self.trend_lbl = ttk.Label(head, style="Muted.TLabel")     # shown as a box now
+        self.ref_lbl = ttk.Label(head, style="Muted.TLabel")       # shown as boxes now
         self.refs = {}
+        self._ref_card = {}
         ui.tip(self.use_btn, "Keep this price for this card at this condition. Batch & price "
                              "uses it for that card for the next "
                              f"{market.DECISION_DAYS} days instead of working one out — "
@@ -300,16 +292,41 @@ class PricesTab(ttk.Frame):
             ui.tip(card, tiptext)
             self.figs[key] = card
 
+        # The context around the eBay price, as boxes rather than sentences:
+        # what you chose, how it has moved, what Europe and the US say, and
+        # what was left out. Each explains itself on hover; most do something
+        # on a click.
+        ctx = ttk.Frame(right)
+        ctx.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        self.ctx = {}
+        for i, (key, label, tiptext, click) in enumerate((
+                ("yours", "Your price", lambda: self._yours_tip(), self.use_price),
+                ("trend", "Trend", "This card's suggested price at its first and latest saved "
+                                   "search, and the change.", None),
+                ("cardmarket", "Cardmarket", lambda: self._cm_tip(), self.open_cardmarket),
+                ("tcgplayer", "TCGplayer (US)", "TCGplayer's market price in dollars, from the "
+                                                "catalogue — a cross-check, not eBay UK.", None),
+                ("leftout", "Left out", lambda: self._leftout_tip(), self._show_left_out))):
+            card = ui.stat_card(ctx, label, "—", "", width=110, compact=True)
+            card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0))
+            ctx.columnconfigure(i, weight=1, uniform="ctx")
+            ui.tip(card, tiptext)
+            if click:
+                for w in [card] + list(card.winfo_children()):
+                    w.configure(cursor="hand2")
+                    w.bind("<Button-1>", lambda _e, f=click: f())
+            self.ctx[key] = card
+
         self.chart = tk.Canvas(right, height=170, background=ui.C["surface"],
                                highlightthickness=1, highlightbackground=ui.C["border"])
-        self.chart.grid(row=2, column=0, sticky="ew")
+        self.chart.grid(row=3, column=0, sticky="ew")
         self.chart.bind("<Configure>", lambda _e: self._draw_chart())
         ui.tip(self.chart, "Every sale found, by date and total. Filled dots counted, hollow "
                            "ones were left out. The green line is the suggested price, the "
                            "dashed one its basis. Click a dot to see that listing.")
 
         lower = ttk.PanedWindow(right, orient="horizontal")
-        lower.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        lower.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
         sales = ttk.Frame(lower)
         sales.columnconfigure(0, weight=1)
         sales.rowconfigure(1, weight=1)
@@ -372,18 +389,20 @@ class PricesTab(ttk.Frame):
         detail.columnconfigure(0, weight=1)
         ttk.Label(detail, text="Listing", style="Heading.TLabel").grid(row=0, column=0,
                                                                        sticky="w")
-        self.pic = tk.Canvas(detail, width=260, height=220, background=ui.C["sunken"],
+        self.pic = tk.Canvas(detail, width=260, height=160, background=ui.C["sunken"],
                              highlightthickness=0, cursor="hand2")
         self.pic.bind("<Button-1>", lambda _e: self.open_listing())
         ui.tip(self.pic, "The listing's photo. Click to open the listing on eBay.")
-        self.pic.grid(row=1, column=0, sticky="ew", pady=(4, 6))
+        self.pic.grid(row=2, column=0, sticky="ew", pady=(4, 6))
         self.sale_title = ttk.Label(detail, wraplength=270, justify="left")
-        self.sale_title.grid(row=2, column=0, sticky="w")
-        self.sale_info = ttk.Label(detail, style="Muted.TLabel", wraplength=270,
-                                   justify="left")
-        self.sale_info.grid(row=3, column=0, sticky="w", pady=(4, 6))
+        self.sale_title.grid(row=3, column=0, sticky="w")
+        # The listing's details as a short label / value list, not a paragraph.
+        self.sale_info = ttk.Frame(detail)
+        self.sale_info.grid(row=4, column=0, sticky="ew", pady=(6, 8))
+        self.sale_info.columnconfigure(1, weight=1)
         btns = ttk.Frame(detail)
-        btns.grid(row=4, column=0, sticky="w")
+        # Above the picture: on a short window the bottom is what gets cut.
+        btns.grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.open_btn = ttk.Button(btns, text="Open on eBay ↗", command=self.open_listing,
                                    state="disabled")
         self.open_btn.pack(side="left")
@@ -396,14 +415,14 @@ class PricesTab(ttk.Frame):
                                 "counted sale, or count one that was left out when you can "
                                 "see it is the same card — the price is worked again. "
                                 "Nothing on a listing changes.")
-        copy = ttk.Button(btns, text="Copy title", style="Ghost.TButton",
+        copy = ttk.Button(btns, text="Copy", style="Ghost.TButton",
                           command=lambda: self._copy_sale_title())
         copy.pack(side="left", padx=(6, 0))
         ui.tip(copy, "Copy the listing title — handy for searching the same wording.")
         lower.add(detail, weight=1)
 
         work = ttk.Frame(right)
-        work.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        work.grid(row=5, column=0, sticky="ew", pady=(8, 0))
         work.columnconfigure(0, weight=1)
         self.work_open = tk.BooleanVar(value=False)
         self.work_btn = ttk.Checkbutton(work, text="How this price was worked out ▸",
@@ -877,8 +896,7 @@ class PricesTab(ttk.Frame):
             watching = market.is_watched(p.title)
         except Exception:                                     # noqa: BLE001
             points, watching = [], False
-        text = market.describe_trend(points)
-        self.trend_lbl.configure(text=f"Trend: {text}" if text else "")
+        self._show_trend(points)
         self._want_ref(p.title)
         self.watch_btn.configure(state="normal", text="★ Watching" if watching else "☆ Watch")
         f = market.figures(p)
@@ -920,17 +938,22 @@ class PricesTab(ttk.Frame):
         self.working.configure(state="disabled")
         self.rows = market.all_sales(p)
         why = market.reasons(p)
+        self._why = why
+        found = len(p.kept) + len(p.excluded)
         if why:
-            note = f"Left out {len(p.excluded)}: " + ", ".join(
-                f"{n} {r.replace('_', ' ')}" for r, n in why) + "."
-            if not p.kept:
-                note += (" None counted — check the reasons. Comp Finder matches by the "
-                         "listing-title form (name, number/total, set, and Japanese if it "
-                         "is): try searching that way, or select a sale and Count it anyway.")
-            self.why_lbl.configure(text=note, foreground=ui.C["warn"] if not p.kept
-                                   else ui.C["muted"])
+            top = ", ".join(f"{n} {r.replace('_', ' ').replace(' (cardcropper)', '')}"
+                            for r, n in why[:2])
+            self.ctx["leftout"].set(str(len(p.excluded)), top + ("…" if len(why) > 2 else ""),
+                                    colour=ui.C["warn"] if not p.kept else None)
         else:
-            self.why_lbl.configure(text="")
+            self.ctx["leftout"].set("0", f"all {found} counted" if found else "")
+        # One line under the listings only when something needs doing.
+        self.why_lbl.configure(
+            text=("None of the sales counted. Comp Finder matches the listing-title form — "
+                  "name, number/total, set (and Japanese if it is): try searching that way, "
+                  "pick All languages for a non-English card, or select a sale and Count it "
+                  "anyway.") if why and not p.kept else "",
+            foreground=ui.C["warn"])
         self._fill_sales()
         self._draw_chart()
 
@@ -1098,7 +1121,7 @@ class PricesTab(ttk.Frame):
 
     def _clear_sale(self):
         self.sale_title.configure(text="Select a sale to see the listing.")
-        self.sale_info.configure(text="")
+        self._sale_rows([])
         self.open_btn.configure(state="disabled")
         self.toggle_btn.configure(state="disabled", text="Leave out")
         self.pic.delete("all")
@@ -1110,25 +1133,27 @@ class PricesTab(ttk.Frame):
         i = int(sel[0])
         state, why, s = self.rows[i]
         self.sale_title.configure(text=s.get("title", ""))
-        info = [f"Total {_money(pricing.sale_total(s))} = {_money(s.get('price'))} + "
-                f"{_money(s.get('postage') or 0)} postage"
-                + (" (capped at £4 in the total)" if float(s.get("postage") or 0) >
-                   pricing.POSTAGE_CAP else ""),
-                f"Sold {(s.get('date') or 'date unknown')[:10]}",
-                (f"Counted by you — Comp Finder had left it out "
-                 f"({(s.get('excluded_reason') or 'no reason').replace('_', ' ')})"
-                 if s.get("counted_by_hand") else
-                 "Counted" + (f" — Comp Finder flagged it "
-                              f"{(s.get('excluded_reason') or '').replace('_', ' ')}, which "
-                              "counts anyway (postage is capped; language per the setting)"
-                              if s.get("put_back") else "")) if state == KEPT
-                else f"Left out — {why.replace('_', ' ')}"]
+        capped = float(s.get("postage") or 0) > pricing.POSTAGE_CAP
+        flagged = (s.get("excluded_reason") or "").replace("_", " ")
+        if state != KEPT:
+            status, colour = f"Left out — {why.replace('_', ' ')}", ui.C["warn"]
+        elif s.get("counted_by_hand"):
+            status, colour = f"Counted by you (was: {flagged or 'left out'})", ui.C["accent"]
+        elif s.get("put_back"):
+            status, colour = f"Counted ({flagged} — counts anyway)", ui.C["ok"]
+        else:
+            status, colour = "Counted", ui.C["ok"]
+        rows = [("Total", f"{_money(pricing.sale_total(s))}  ({_money(s.get('price'))} + "
+                          f"{_money(s.get('postage') or 0)} P&P"
+                          + (", P&P capped at £4" if capped else "") + ")", None),
+                ("Sold", (s.get("date") or "unknown")[:10], None),
+                ("Status", status, colour)]
         skip = {"title", "price", "postage", "date", "url", "excluded_reason", "why",
                 "put_back", "counted_by_hand"}
         for k, v in s.items():
             if k not in skip and v not in (None, "", [], {}) and not market.image_in({k: v}):
-                info.append(f"{k.replace('_', ' ').capitalize()}: {v}")
-        self.sale_info.configure(text="\n".join(info))
+                rows.append((k.replace("_", " ").capitalize(), str(v), None))
+        self._sale_rows(rows)
         self.open_btn.configure(state="normal" if s.get("url") else "disabled")
         mine = why == market.LEFT_OUT
         self.toggle_btn.configure(
@@ -1139,6 +1164,16 @@ class PricesTab(ttk.Frame):
         self._show_pic(None, waiting=True)
         self._want(s)
         self._mark_gallery(str(i))
+
+    def _sale_rows(self, rows):
+        for w in self.sale_info.winfo_children():
+            w.destroy()
+        for r, (label, value, colour) in enumerate(rows):
+            ttk.Label(self.sale_info, text=label, style="Small.TLabel").grid(
+                row=r, column=0, sticky="nw", padx=(0, 10), pady=1)
+            v = ttk.Label(self.sale_info, text=value, wraplength=200, justify="left",
+                          **({"foreground": colour} if colour else {}))
+            v.grid(row=r, column=1, sticky="w", pady=1)
 
     # ------------------------------------------------------------ pictures
 
@@ -1405,51 +1440,142 @@ class PricesTab(ttk.Frame):
         """
         Reference prices for the card, fetched once per title in the background:
         Cardmarket's own price guide (downloaded daily — cardmarket.py), and
-        TCGplayer from the catalogue.
+        TCGplayer from the catalogue. Kept as figures, for the boxes.
         """
-        if title in self.refs:
+        if title in self.refs and self.refs[title] is not None:
             self._show_ref(title)
             return
+        for k in ("cardmarket", "tcgplayer"):
+            self.ctx[k].set("…", "looking up")
+        if title in self.refs:
+            return                       # already on its way
         self.refs[title] = None
-        self.ref_lbl.configure(text="")
 
         def load():
-            lines = []
+            ref = {"card": None, "cm": None, "tcg": {}}
             try:
                 from . import cardmarket, catalog
                 res = catalog.search(market.clean_query(title), limit=3)
                 if res:
                     c = res[0]
+                    ref["card"] = c
                     try:
-                        cm = cardmarket.describe(cardmarket.price_for(
-                            c, printing=pricing.printing_of(title)))
+                        ref["cm"] = cardmarket.price_for(c, printing=pricing.printing_of(title))
                     except Exception:                         # noqa: BLE001
-                        cm = ""
-                    if cm:
-                        lines.append(cm)
+                        ref["cm"] = None
                     us = (c.prices or {}).get("TCGplayer market (USD)")
-                    if isinstance(us, dict) and us:
-                        lines.append("TCGplayer market: " + ", ".join(
-                            f"{k} ${float(v):.2f}" for k, v in list(us.items())[:2] if v))
-                    if lines:
-                        lines[0] = f"{c.name} {c.number}, {c.set_name} — " + lines[0]
+                    ref["tcg"] = us if isinstance(us, dict) else {}
             except Exception:                                 # noqa: BLE001
-                lines = []
-            self.events.put(("ref", (title, "\n".join(lines))))
+                pass
+            self.events.put(("ref", (title, ref)))
         self._pool.submit(load)
 
     def _show_ref(self, title):
-        if self.current is not None and self.priced[self.current].title == title:
-            self.ref_lbl.configure(text=self.refs.get(title) or "")
+        if self.current is None or self.priced[self.current].title != title:
+            return
+        ref = self.refs.get(title)
+        if not ref:
+            return
+        self._ref_card = ref
+        cm, card = ref.get("cm"), ref.get("card")
+        if cm and cm.get("range"):
+            lo, hi = cm["range"]
+            self.ctx["cardmarket"].set(f"€{lo:.0f}–{hi:.0f}", f"{cm['versions']} versions — "
+                                                              "click to check")
+        elif cm and cm.get("prices"):
+            vals = dict(cm["prices"])
+            bits = []
+            if vals.get("30-day average"):
+                bits.append(f"30-day €{vals['30-day average']:.2f}")
+            bits.append("exact" + (f" · {cm['print']}" if cm.get("print") not in
+                                   (None, "", "Normal") else "") if cm.get("exact") else
+                        ("set unsure" if not cm.get("sure") else "check" if cm.get("approx")
+                         else "matched"))
+            main = vals.get("Trend") or next(iter(vals.values()))
+            self.ctx["cardmarket"].set(f"€{main:.2f}", " · ".join(bits),
+                                       colour=None if cm.get("exact") or cm.get("sure")
+                                       else ui.C["warn"])
+        else:
+            self.ctx["cardmarket"].set("—", "not found" if card else "card not found")
+        tcg = ref.get("tcg") or {}
+        if tcg:
+            items = [(k, v) for k, v in tcg.items() if v]
+            first = items[0] if items else None
+            self.ctx["tcgplayer"].set(f"${first[1]:.2f}" if first else "—",
+                                      " · ".join(f"{k} ${v:.2f}" for k, v in items[1:3])
+                                      or (first[0] if first else ""))
+        else:
+            self.ctx["tcgplayer"].set("—", "no US price")
+
+    # ------------------------------------------------------------ box hovers & clicks
+
+    def _yours_tip(self):
+        d = getattr(self, "_chosen", None)
+        if d:
+            return (f"You chose {_money(d['price'])} {d['when']}"
+                    + (f" ({d['note']})" if d.get("note") else "")
+                    + f". Batch & price uses it for this card for {market.DECISION_DAYS} days. "
+                      "Click to change or clear it.")
+        return ("No price chosen for this card. Click to keep the suggested price (or one "
+                "you type) — Batch & price then uses it.")
+
+    def _cm_tip(self):
+        from . import cardmarket
+        cm = (getattr(self, "_ref_card", {}) or {}).get("cm")
+        text = cardmarket.describe(cm) if cm else ""
+        return ((text + "\n\n") if text else "") + (
+            "Cardmarket's own price guide, downloaded daily (euros). 'exact' = priced by "
+            "the print's own Cardmarket id. Click to open it on Cardmarket.")
+
+    def _leftout_tip(self):
+        why = getattr(self, "_why", None)
+        if not why:
+            return "Sales Comp Finder or the house rules left out. None for this card."
+        return ("Left out, by reason:\n" + "\n".join(
+            f"  {n} × {r.replace('_', ' ')}" for r, n in why)
+            + "\n\nClick to list them under Sold listings.")
+
+    def _show_left_out(self):
+        self.show_out.set(True)
+        self._fill_sales()
+        self.sales_views.select(0)
+        for iid in self.sales.get_children():
+            if self.sales.set(iid, "state") == "left out":
+                self.sales.see(iid)
+                break
+
+    def _show_trend(self, points):
+        if len(points) < 2:
+            self.ctx["trend"].set("—", "first search" if points else "")
+            return
+        a, b = points[0], points[-1]
+        pct = (b["suggested"] - a["suggested"]) / a["suggested"] * 100 if a["suggested"] else 0
+        moved = market.moved(a["suggested"], b["suggested"])
+        self.ctx["trend"].set(f"{pct:+.0f}%", f"£{a['suggested']:.2f} → £{b['suggested']:.2f}"
+                                              f" · {len(points)} searches",
+                              colour=(ui.C["ok"] if pct > 0 else ui.C["bad"]) if moved
+                              else None)
+
+    def open_cardmarket(self):
+        from . import cardmarket
+        ref = getattr(self, "_ref_card", {}) or {}
+        card, cm = ref.get("card"), ref.get("cm")
+        if card is None:
+            return
+        webbrowser.open(cardmarket.product_url(
+            card, cm.get("id") if cm and cm.get("exact") else None))
 
     def _show_chosen(self, p):
         try:
             d = market.decision_for(p.title, p.condition)
         except Exception:                                     # noqa: BLE001
             d = None
-        self.chosen_lbl.configure(
-            text=f"Your price: {_money(d['price'])}, chosen {d['when']} — Batch & price "
-                 "uses it" if d else "")
+        self._chosen = d
+        if d:
+            self.ctx["yours"].set(_money(d["price"]), f"chosen {d['when']} · Batch & price "
+                                                      "uses it", colour=ui.C["ok"])
+        else:
+            self.ctx["yours"].set("—", "click to set one")
 
     def use_price(self):
         """Keep a price for the card on screen — this one, or one typed in."""
