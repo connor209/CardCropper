@@ -239,6 +239,13 @@ class CardUploaderTab(ttk.Frame):
         """What the app knows about this job: grades, house prices, variant decisions."""
         folder = os.path.dirname(path)
         name = job.get("jobName") or ""
+        try:
+            from . import eye_grade, library
+            game, line = eye_grade.game_line(job)
+            library.relabel(os.path.abspath(eye_grade.grades_file(path, job)),
+                            eye_grade.SOURCE, game, line)
+        except Exception:                                   # noqa: BLE001
+            pass
         grades = {s: g for s, (g, _, _) in grading.final_grades(
             grading.read_grades(os.path.join(folder, f"grades-{name}.csv"))).items()}
         priced = {}

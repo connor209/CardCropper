@@ -516,6 +516,12 @@ def cu_tab_checks(work):
         library.flush()
         check(any(c["sku"] == "KU2" and c["standing"] == "LP" for c in library.cards()),
               "an eye grade did not reach the grade library")
+        # An MTG job's grades are filed as MTG — and ones filed as Pokémon are corrected.
+        tab.job.setdefault("settings", {})["tcg"] = "mtg"
+        check(eye_grade.game_line(tab.job) == ("mtg", "mtg"), "MTG job not read as MTG")
+        n = library.relabel(os.path.abspath(gpath), eye_grade.SOURCE, "mtg", "mtg")
+        check(n >= 1 and all(c["game"] == "mtg" for c in library.cards() if c["sku"] == "KU2"),
+              f"MTG grades not relabelled ({n})")
         win.destroy()
 
         # Write change file: the eye grades become condition changes.

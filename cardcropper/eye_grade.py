@@ -117,6 +117,20 @@ def local_scans(job_path, job):
     return {c.sku: (c.front, c.back) for c in m.cards}
 
 
+def game_line(job):
+    """(game, grade-library line) for a CardUploader job, from the job's own settings."""
+    from . import carduploader_api
+    tcg = variants.job_tcg(job)
+    game = carduploader_api.game_of_tcg(tcg)
+    if not tcg:
+        # No game in the job's settings: the SKUs say it (MTG-…, YGO-…).
+        skus = [(c.get("sku") or "").upper() for c in variants.job_cards(job)]
+        for g, prefix in (("mtg", "MTG-"), ("yugioh", "YGO-")):
+            if skus and sum(s.startswith(prefix) for s in skus) * 2 > len(skus):
+                game = g
+    return game, {"yugioh": "yugioh", "mtg": "mtg"}.get(game, "pokemon-en")
+
+
 def _open_image(src):
     if not src:
         return None
@@ -152,6 +166,12 @@ class EyeGrader(tk.Toplevel):
         self.path = grades_file(job_path, job)
         self.local = local_scans(job_path, job)
         self.grader = grader_name(self)
+        self.game, self.line = game_line(job)
+        # Grades keyed here before the game was read from the job were filed
+        # as Pokémon: put them under the job's own game.
+        from . import library
+        library.flush(5)
+        library.relabel(os.path.abspath(self.path), SOURCE, self.game, self.line)
         self.done = eye_grades(self.path)
         self.others = {s: g for s, (g, _, _) in grading.final_grades(
             [r for r in grading.read_grades(self.path) if r.get("source") != SOURCE]).items()}
@@ -472,12 +492,11 @@ class EyeGrader(tk.Toplevel):
         from . import library
         src = self._sources(c)
         sku = c.get("sku", "")
-        ygo = (c.get("game") or "").lower().startswith("yu") or sku.upper().startswith("YGO")
         library.record_later(
             sku, g, SOURCE, origin=os.path.abspath(self.path), pass_no=1,
             images={"front": _cached_path(src["front"]), "back": _cached_path(src["back"])},
             card=c.get("title", ""), batch=self.job.get("jobName", ""),
-            game="yugioh" if ygo else "pokemon", line="yugioh" if ygo else "pokemon-en",
+            game=self.game, line=self.line,
             keyed=g, grader=self.grader, looked="eye", notes=note)
 
     def undo(self, _e=None):

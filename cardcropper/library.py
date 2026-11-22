@@ -842,6 +842,30 @@ def front_calibration(line=None, path=None):
 
 
 
+def relabel(origin, source, game, line, path=None):
+    """
+    Put every grade from one file and source (and its cards) under `game` /
+    `line` — a correction, when grades were filed under the wrong game.
+    Returns how many grades changed.
+    """
+    db = connect(path)
+    try:
+        skus = [r[0] for r in db.execute(
+            "SELECT sku FROM grades WHERE origin=? AND source=? AND "
+            "(IFNULL(game,'')<>? OR IFNULL(line,'')<>?)", (origin, source, game, line))]
+        if not skus:
+            return 0
+        db.execute("UPDATE grades SET game=?, line=? WHERE origin=? AND source=?",
+                   (game, line, origin, source))
+        marks = ", ".join("?" for _ in skus)
+        db.execute(f"UPDATE cards SET game=?, line=? WHERE sku IN ({marks})",
+                   [game, line] + skus)
+        db.commit()
+        return len(skus)
+    finally:
+        db.close()
+
+
 def delete_grade(sku, source, origin="", pass_no="", path=None):
     """Remove one recorded grade (an undo). The card stays, with any other grades."""
     db = connect(path)
