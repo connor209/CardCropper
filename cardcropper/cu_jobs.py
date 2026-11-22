@@ -143,3 +143,21 @@ def collect_downloads(root=None, downloads=None, since_days=14):
             pass
         moved.append((src, path))
     return moved
+
+
+def local_jobs(root=None):
+    """[(name, path, modified)] for every saved job under the batches folder, newest first."""
+    from . import pipeline
+    root = root or batches_root()
+    if not root or not os.path.isdir(root):
+        return []
+    out = []
+    for dirpath, names in pipeline._walk(root):                  # noqa: SLF001
+        for n in names:
+            if n.endswith(".json") and not n.startswith(("manifest-", "priced-", "changes-")):
+                p = os.path.join(dirpath, n)
+                name = pipeline._job_name(p)                     # noqa: SLF001
+                if name:
+                    out.append((name, p, os.path.getmtime(p)))
+    out.sort(key=lambda t: -t[2])
+    return out

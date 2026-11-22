@@ -198,6 +198,21 @@ Downloads** files the job data and history the extension saved, with no token.
 The saved history fills Batch & price's history box, so a batch code is never
 reused.
 
+**CardUploader** (List & price) shows a saved job card by card, as
+CardUploader has it — SKU, title, variant, condition, price, status — with
+what the app knows beside each: your grade, the house price from the last
+report and how far it is from the listed price. Boxes on top total the cards,
+listed value, grades, cards to reprice and variant decisions; filter to
+listed, price-to-move or not-graded cards. Pick a card for your scan beside
+the catalogue picture, and **Sold prices**, **Card lookup** or **eBay ↗**.
+Jobs come from every `job-<batch>.json` under the Batches folder;
+**CardUploader jobs…** fetches new ones. It is read-only: changes still go
+through the change file and the extension's diff and Apply.
+
+**Moved batch folders** (another computer, a shared Drive): a manifest's
+image paths are found again beside the manifest when the stored path no
+longer exists, so a batch opens wherever its folder now lives.
+
 **Batches** (under Home) lists every batch under a folder you choose, with a
 column per stage — batched (and crop-check HOLDs), graded, variants decided,
 priced (and whether the run report is READY), change file — read off the

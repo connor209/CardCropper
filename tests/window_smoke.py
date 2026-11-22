@@ -171,6 +171,22 @@ def pipeline_checks(work):
         batches.ManifestCard(f"KA{i}", i, i) for i in range(1, 4)])
     batches.write_manifest(b, folder)
 
+    # The batch folder moved (another computer, Drive mounted elsewhere): the
+    # manifest's stored paths name nothing, and the images are found by name.
+    img = os.path.join(folder, "0001_1_front.jpg")
+    Image.new("RGB", (10, 10)).save(img)
+    import json as _j
+    mpath = os.path.join(folder, "manifest-KA.json")
+    with open(mpath, encoding="utf-8") as fh:
+        m = _j.load(fh)
+    m["cards"][0]["front"] = r"G:\My Drive\batches\cropped\0001_1_front.jpg"
+    m["source"] = r"G:\My Drive\batches\cropped"
+    with open(mpath, "w", encoding="utf-8") as fh:
+        _j.dump(m, fh)
+    moved = batches.read_manifest(mpath)
+    check(moved.cards[0].front == img and moved.source == folder,
+          f"moved paths not found again: {moved.cards[0].front}, {moved.source}")
+
     def status():
         got = {x.name: x for x in pipeline.scan(root)}
         return got["KA"]
@@ -415,6 +431,59 @@ def market_checks(work):
     url = market.ebay_sold_url("Lugia 78/124 Fates Collide Pokemon NM")
     check("LH_Sold=1" in url and "Pokemon" not in url and "NM" not in url,
           f"sold search URL wrong: {url}")
+
+
+def cu_tab_checks(work):
+    """The CardUploader page lists saved jobs and shows grades and house prices beside each card."""
+    import json as _json
+    import time as _time
+    import tkinter as tk
+    from cardcropper import cu_jobs, folders, grading, ui
+    from cardcropper.cu_tab import CardUploaderTab
+
+    root_dir = os.path.join(work, "cu")
+    folder = os.path.join(root_dir, "26.11.22 - 001", "cropped")
+    os.makedirs(folder)
+    cards = [{"sku": f"KU{i}", "title": f"Card {i}", "variant": "Normal", "condition": "NM",
+              "price": p, "status": s, "imageUrls": {"front": ""}}
+             for i, (p, s) in enumerate((("4.49", "listed"), ("9.99", "listed"),
+                                         ("1.99", "processed")), 1)]
+    with open(os.path.join(folder, "job-KU.json"), "w", encoding="utf-8") as fh:
+        _json.dump({"jobName": "KU", "jobId": "j1", "results": {"cards": cards}}, fh)
+    grading.record(os.path.join(folder, "grades-KU.csv"), "KU1", grading.Assessment("NM"),
+                   "NM", [])
+    with open(os.path.join(folder, "priced-KU.json"), "w", encoding="utf-8") as fh:
+        _json.dump([{"sku": "KU1", "suggested": 5.99}, {"sku": "KU2", "suggested": 9.99}], fh)
+    folders.save_settings(batches_root=root_dir)
+    check([n for n, _, _ in cu_jobs.local_jobs()] == ["KU"], "saved job not found")
+
+    went = []
+    root = tk.Tk()
+    try:
+        ui.apply_theme(root)
+        page = tk.Frame(root)
+        page.pack(fill="both", expand=True)
+        tab = CardUploaderTab(page, actions={"market": went.append})
+        deadline = _time.time() + 10
+        while _time.time() < deadline and len(tab.tv.get_children()) < 3:
+            root.update()
+            _time.sleep(0.05)
+        rows = [tab.tv.item(i, "values") for i in tab.tv.get_children()]
+        check(len(rows) == 3, f"job cards not shown: {rows}")
+        check(rows[0][6] == "NM" and rows[0][7] == "£5.99" and rows[0][8] == "+1.50",
+              f"grade / house price / difference wrong: {rows[0]}")
+        tab.show_var.set("move")
+        tab._fill()
+        check(len(tab.tv.get_children()) == 1, "'Price to move' filter wrong")
+        tab.show_var.set("all")
+        tab.find_var.set("card 3")
+        tab._fill()
+        check(len(tab.tv.get_children()) == 1, "find did not narrow the list")
+        tab.tv.selection_set(tab.tv.get_children()[0])
+        tab._to_market()
+        check(went == ["Card 3"], f"Sold prices did not send the title: {went}")
+    finally:
+        root.destroy()
 
 
 def review_panel_checks(work):
@@ -706,6 +775,7 @@ def window_checks():
     root.destroy()
     chart_hover_checks()
     review_panel_checks(tempfile.mkdtemp(prefix="cc-panel-"))
+    cu_tab_checks(tempfile.mkdtemp(prefix="cc-cutab-"))
     grade_undo_checks(tempfile.mkdtemp(prefix="cc-gundo-"))
     from cardcropper import gui, guide, ui, updater
     import cardcropper.shell as shell_mod

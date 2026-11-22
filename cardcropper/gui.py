@@ -904,8 +904,24 @@ def main():
     from .cu_window import JobsWindow
 
     def open_jobs():
-        JobsWindow(root, on_fetched=lambda path: folders.remember("variants", path))
+        def fetched(path):
+            folders.remember("variants", path)
+            cu_page = sh_.objects.get("carduploader")
+            if cu_page is not None:
+                cu_page.refresh_jobs()
+        JobsWindow(root, on_fetched=fetched)
     sh_.actions = {"jobs": open_jobs, "freezes": sh_.open_freezes}
+
+    # CardUploader: the batches as CardUploader has them, with the app's tools.
+    from .cu_tab import CardUploaderTab
+
+    def to_lookup(title):
+        if lookup is not None:
+            sh_.show("lookup")
+            lookup.search(title)
+    sh_.add_page("carduploader", lambda m: CardUploaderTab(m, actions={
+        "market": lambda title: (sh_.show("prices"), prices.lookup(title)),
+        "lookup": to_lookup, "jobs": open_jobs}))
     sh_.add_tool("CardUploader jobs…", open_jobs, separator=True)
     # The history the extension saved, filed into the settings folder, is
     # what Make batches reads so a batch code is never reused.

@@ -315,12 +315,37 @@ def write_manifest(b, out_dir=None):
     return stem + ".json", stem + ".csv"
 
 
+def _reroot(stored, near):
+    """
+    A stored image path that no longer exists, found again: the manifest
+    records full paths, and on another computer — a shared Google Drive
+    mounted at a different place — those name nothing. The file is looked
+    for by name beside the manifest, then in the folders around it.
+    """
+    if not stored or os.path.exists(stored):
+        return stored
+    name = os.path.basename(stored.replace("\\", "/"))
+    for folder in near:
+        candidate = os.path.join(folder, name)
+        if os.path.exists(candidate):
+            return candidate
+    return stored
+
+
 def read_manifest(path):
-    """A manifest JSON back as a Batch."""
+    """A manifest JSON back as a Batch — its image paths found again if they moved."""
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
-    cards = [ManifestCard(**{k: v for k, v in c.items()
-                             if k in ManifestCard.__dataclass_fields__})
-             for c in data.get("cards", [])]
-    return Batch(data["code"], data["game"], data["language"], data.get("source", ""),
-                 cards)
+    here = os.path.dirname(os.path.abspath(path))
+    near = [here, os.path.dirname(here)]
+    source = data.get("source", "")
+    if source and not os.path.isdir(source):
+        source = here
+    cards = []
+    for c in data.get("cards", []):
+        fields = {k: v for k, v in c.items() if k in ManifestCard.__dataclass_fields__}
+        for role in ("front", "back", "front_crops", "back_crops"):
+            if fields.get(role):
+                fields[role] = _reroot(fields[role], near)
+        cards.append(ManifestCard(**fields))
+    return Batch(data["code"], data["game"], data["language"], source, cards)

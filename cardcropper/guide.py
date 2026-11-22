@@ -11,14 +11,16 @@ A tip names the control's effect and, where it matters, what it will NOT do
 """
 
 #: Pages that are one big workspace: their guide starts shut (F1 opens it).
-GUIDE_CLOSED = {"grade", "variants", "prices", "lookup", "library", "terapeak"}
+GUIDE_CLOSED = {"grade", "variants", "prices", "lookup", "library", "terapeak",
+                "carduploader"}
 
 #: (group, [page keys]) — the sidebar, in the order the work is done.
 GROUPS = (
     ("", ("home", "batches")),
     ("1 · Scan", ("folders", "split", "crop")),
     ("2 · Grade", ("condition", "grade", "library")),
-    ("3 · List & price", ("variants", "lookup", "prices", "terapeak", "batch")),
+    ("3 · List & price", ("carduploader", "variants", "lookup", "prices", "terapeak",
+                          "batch")),
 )
 
 PAGES = {
@@ -176,6 +178,20 @@ house rules make the price.
 
 History keeps every search with its listings. More ▾ has the golden test, priced batches,
 importing sales from a Terapeak CSV, and Comp Finder sign-in."""),
+
+    "carduploader": dict(
+        label="CardUploader", icon="☁",
+        title="CardUploader batches",
+        lead="Your CardUploader batches card by card, with the grade, house price and checks beside each.",
+        guide="""\
+Pick a job — any saved under the Batches folder (CardUploader jobs… fetches more with a
+token from the extension). Every card shows as CardUploader has it — title, variant,
+condition, price, listed or not, its scan beside the catalogue picture — and beside that what
+the app knows: its grade, the house price and how far it is from the price it has, whether
+its variant was checked.
+
+Price to move lists the cards whose house price differs; double-click a card for its sold
+prices on Market. Read-only: changes still go through the change file and the extension."""),
 
     "terapeak": dict(
         label="Terapeak checks", icon="✓",
