@@ -44,6 +44,8 @@ class LibraryTab(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(3, weight=1)
         self.worker = None
+        #: Set by the window: open a pick list on the Grade tab.
+        self.open_in_grade = None
         self.events = queue.Queue()
         self.rows = {}
         self.photos = []
@@ -86,8 +88,17 @@ class LibraryTab(ttk.Frame):
         seg.grid(row=0, column=4, padx=(10, 0))
         ui.tip(seg, "Borderline? lists the cards the library thinks are close calls — "
                     "a blind check needs three of them in every ten.")
+        blind = ui.more_menu(bar, [
+            ("Start a blind check…", self.start_blind),
+            ("Score a blind check…", self.score_blind),
+            None,
+            ("How graders are doing…", self.show_graders),
+        ], text="Blind checks", tip_text="Before a batch: grade 10 golden cards blind on the "
+                                         "Grade tab, then score them against the grades they "
+                                         "have in hand. Any overgrade stops the batch.")
+        blind.grid(row=0, column=5, padx=(10, 0))
         imp = ttk.Button(bar, text="Import grades…", command=self.import_folder)
-        imp.grid(row=0, column=5, padx=(10, 0))
+        imp.grid(row=0, column=6, padx=(6, 0))
         ui.tip(imp, "Bring in grades made before the library existed: picks up every "
                     "grades-*.csv and conditioning-review.csv under a folder you choose. "
                     "Safe to run twice.")
@@ -98,7 +109,7 @@ class LibraryTab(ttk.Frame):
             ("Open golden-set folder", lambda: self._open_dir("golden")),
             ("Open library images folder", lambda: self._open_dir(library.IMAGE_DIR)),
         ], tip_text="Export, re-read golden files edited by hand, open folders.")
-        more.grid(row=0, column=6, padx=(6, 0))
+        more.grid(row=0, column=7, padx=(6, 0))
 
     def _build_coverage(self):
         self.coverage = ttk.Frame(self, style="Card.TFrame", padding=(12, 8))
@@ -415,6 +426,74 @@ class LibraryTab(ttk.Frame):
                 "Golden set", f"Take {self.selected} out of its golden set?"):
             library.demote(self.selected)
             self.refresh()
+
+    # ------------------------------------------------------------ blind checks
+
+    def _line_choice(self):
+        line = self.line_var.get()
+        return line if line != ALL else "pokemon-en"
+
+    def start_blind(self):
+        line = self._line_choice()
+        try:
+            path = library.start_blind(line)
+        except ValueError as exc:
+            messagebox.showinfo("Blind check", f"{line}: {exc}.\n\nAdd more cards to the "
+                                               "golden set (Borderline? lists good "
+                                               "candidates), or pick another line in the "
+                                               "filter above.")
+            return
+        if self.open_in_grade:
+            self.open_in_grade(path)
+        messagebox.showinfo("Blind check", f"{audits.BLIND_N} golden cards from {line} are open "
+                                           "on the Grade tab, true grades hidden. Grade them "
+                                           "as usual, then come back to Blind checks → Score "
+                                           "a blind check.")
+
+    def score_blind(self):
+        checks = library.blind_checks()
+        if not checks:
+            messagebox.showinfo("Blind check", "No blind check started yet — Blind checks → "
+                                               "Start a blind check.")
+            return
+        path, line, graded, total = checks[0]
+        if graded < total and not messagebox.askyesno(
+                "Blind check", f"Only {graded} of {total} cards in the latest blind check "
+                               f"({line}) are graded — an ungraded card counts as a stop.\n\n"
+                               "Score it anyway?"):
+            return
+        stop, rows = library.score_blind(path)
+        lines = [f"{'STOP — do not start the batch' if stop else 'PASS — the batch can start'}"
+                 f"   ({line}, {os.path.basename(path)})", ""]
+        for r in rows:
+            lines.append(f"{r['result']:<11} ours {r['our_grade'] or '—':<4} in hand "
+                         f"{r['true_grade']:<4} {r['id']}  {r.get('card', '')}")
+        over = sum(1 for r in rows if r["result"] == "OVERGRADE")
+        lines += ["", f"{over} overgrade(s). Recorded in the audit log; disagreements in the "
+                      "error log."]
+        ui.info_dialog(self, "Blind check result", "\n".join(lines))
+        self.refresh()
+
+    def show_graders(self):
+        st = library.grader_stats()
+        if not st:
+            messagebox.showinfo("Graders", "No grades with a grader's name yet.")
+            return
+        lines = ["Against golden truth (blind checks) and against each other (cards with "
+                 "passes from two graders).", ""]
+        for name, e in sorted(st.items()):
+            parts = []
+            if e["blind"]:
+                parts.append(f"blind {e['match']}/{e['blind']} matched, "
+                             f"{e['over']} OVERGRADED, {e['under']} undergraded")
+            if e["passes"]:
+                parts.append(f"agreed with the standing grade on {e['agreed']}/{e['passes']} "
+                             f"shared cards ({e['agreed'] / e['passes']:.0%})")
+            lines.append(f"{name}: " + ("; ".join(parts) or "no blind checks or shared "
+                                                            "cards yet"))
+        lines += ["", "An overgrade (our grade better than the card's in-hand grade) is the "
+                      "expensive mistake: it is what gets returned."]
+        ui.info_dialog(self, "How graders are doing", "\n".join(lines))
 
     def _ask(self, title, prompt, initial=""):
         from tkinter import simpledialog

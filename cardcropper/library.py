@@ -683,3 +683,120 @@ def import_folder(folder, path=None, progress=None):
         if progress:
             progress(i, len(found), p)
     return len(found), total
+
+
+# ---------------------------------------------------------------- blind checks
+
+PICK_FIELDS = ["id", "front", "back", "front_crops", "back_crops"]
+
+
+def blind_dir():
+    return os.path.join(settings_dir(), "golden", "blind")
+
+
+def start_blind(line, rng=None):
+    """
+    Pick a blind check from a line's golden set (audits.pick_blind: 10 cards,
+    3+ borderline) and write the pick list the Grade tab opens. The list
+    holds only what the grader may see — the scans, never the true grade.
+    Returns its path. Raises ValueError when the set cannot supply a check.
+    """
+    golden = audits.read_golden(golden_file(line))
+    picks = audits.pick_blind(golden, rng=rng)
+    os.makedirs(blind_dir(), exist_ok=True)
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = os.path.join(blind_dir(), f"blind-{line}-{stamp}.csv")
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=PICK_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(picks)
+    return path
+
+
+def blind_checks():
+    """Every blind check started, newest first: [(path, line, graded, total)]."""
+    try:
+        names = sorted((n for n in os.listdir(blind_dir())
+                        if n.startswith("blind-") and n.endswith(".csv")
+                        and "-grades" not in n), reverse=True)
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        path = os.path.join(blind_dir(), n)
+        line = n[len("blind-"):].rsplit("-", 2)[0]
+        total = len(audits._read(path))                     # noqa: SLF001
+        graded = len(_blind_grades(path))
+        out.append((path, line, graded, total))
+    return out
+
+
+def _blind_grades(picks_path):
+    """{id: grade} the Grade tab wrote for a blind check (<picks>-grades-score.csv)."""
+    score = os.path.splitext(picks_path)[0] + "-grades-score.csv"
+    return {r["id"]: r["grade"] for r in audits._read(score) if r.get("grade")}  # noqa: SLF001
+
+
+def score_blind(picks_path, record=True):
+    """
+    Score a blind check against the golden truth. Returns (stop, rows):
+    stop is True on any overgrade or ungraded card — the batch does not
+    start. With `record`, the result goes in the audit log (kind 'blind'),
+    and every disagreement in the error log, as `--cli golden --score` does.
+    """
+    name = os.path.basename(picks_path)
+    line = name[len("blind-"):].rsplit("-", 2)[0]
+    truth = {g["id"]: g for g in audits.read_golden(golden_file(line))}
+    picks = [truth[r["id"]] for r in audits._read(picks_path)          # noqa: SLF001
+             if r.get("id") in truth]
+    stop, rows = audits.score_blind(picks, _blind_grades(picks_path))
+    if record:
+        from . import cli_ops
+        p = cli_ops.paths()
+        game = "pokemon" if line.startswith("pokemon") else line
+        audits.record_audit(p["audits"], p["errors"], os.path.splitext(name)[0], game,
+                            [{"sku": r["id"], "card": r.get("card", ""),
+                              "our_grade": r["our_grade"] or "", "true_grade": r["true_grade"],
+                              "source": "blind check"}
+                             for r in rows if r["our_grade"]], kind="blind")
+    return stop, rows
+
+
+# ---------------------------------------------------------------- graders
+
+
+def grader_stats(path=None):
+    """
+    How each grader is doing, from the library:
+
+    * against golden truth — their blind-check grades beside each card's
+      in-hand grade: matches, overgrades (the expensive mistake), undergrades;
+    * against each other — cards with passes from two or more graders: how
+      often their grade agreed with the grade that stood.
+
+    Returns {grader: {blind, match, over, under, passes, agreed}}.
+    """
+    out = {}
+
+    def entry(name):
+        return out.setdefault(name or "(no name)", {"blind": 0, "match": 0, "over": 0,
+                                                    "under": 0, "passes": 0, "agreed": 0})
+    for c in cards(path):
+        human = [g for g in c["grades"] if g["source"] != "golden-blind"]
+        for g in c["grades"]:
+            if g["source"] == "golden-blind" and c.get("true_grade"):
+                e = entry(g["grader"])
+                e["blind"] += 1
+                if g["grade"] == c["true_grade"]:
+                    e["match"] += 1
+                elif audits.is_overgrade(g["grade"], c["true_grade"]):
+                    e["over"] += 1
+                else:
+                    e["under"] += 1
+        if len({g["grader"] for g in human}) >= 2:
+            standing = grading.worst(g["grade"] for g in human)
+            for g in human:
+                e = entry(g["grader"])
+                e["passes"] += 1
+                e["agreed"] += 1 if g["grade"] == standing else 0
+    return out

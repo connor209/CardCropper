@@ -103,11 +103,50 @@ def library_checks(work):
     counts, near = library.similar("pokemon-en", back_points=2, back_corners=0)
     check(near and near[0]["sku"] == "KA1", f"nearest card wrong: {[c['sku'] for c in near]}")
 
+    blind_checks()
+
     library.record_later("KC1", "HP", "grade-tab", line="yugioh")
     library.flush()
     check(any(c["sku"] == "KC1" for c in library.cards(line="yugioh")),
           "a background record never landed")
     check(library.export_csv(os.path.join(work, "all.csv")) >= 4, "export lost grades")
+
+
+def blind_checks():
+    """A blind check started, graded and scored from the library."""
+    import random
+    from cardcropper import audits, library
+    for i in range(12):
+        sku = f"GB{i}"
+        library.record(sku, "LP" if i % 2 else "NM", "grade-tab", line="pokemon-mini",
+                       grader="Ann", pass_no="1", origin="o")
+        library.promote(sku, "LP" if i % 2 else "NM", borderline=i < 4)
+    path = library.start_blind("pokemon-mini", rng=random.Random(1))
+    with open(path, encoding="utf-8") as fh:
+        head = fh.readline()
+    check("true_grade" not in head and "borderline" not in head,
+          f"a blind pick list must not show the answers: {head}")
+    picks = audits._read(path)                               # noqa: SLF001
+    check(len(picks) == audits.BLIND_N, f"{len(picks)} picks")
+    truth = {g["id"]: g["true_grade"] for g in audits.read_golden(
+        library.golden_file("pokemon-mini"))}
+    # What the Grade tab writes: one card overgraded, the rest right.
+    score = os.path.splitext(path)[0] + "-grades-score.csv"
+    with open(score, "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=["id", "grade"])
+        w.writeheader()
+        for n, r in enumerate(picks):
+            t = truth[r["id"]]
+            w.writerow({"id": r["id"], "grade": "NM" if n == 0 else t})
+            library.record(r["id"], "NM" if n == 0 else t, "golden-blind", grader="Bob",
+                           origin=path, pass_no="0", take_snapshot=False)
+    check(library.blind_checks()[0][2] == audits.BLIND_N, "graded count wrong")
+    stop, rows = library.score_blind(path)
+    over = [r for r in rows if r["result"] == "OVERGRADE"]
+    check(stop == bool(over) and len(over) <= 1, f"scoring wrong: {rows}")
+    bob = library.grader_stats()["Bob"]
+    check(bob["blind"] == audits.BLIND_N and bob["over"] == len(over),
+          f"grader figures wrong: {bob}")
 
 
 def market_checks(work):
