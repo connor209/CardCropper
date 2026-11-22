@@ -965,6 +965,10 @@ def main():
     # The settings folder backs itself up once a week, in the background.
     from . import backup
     root.after(6000, lambda: backup.auto())
+    # Cardmarket's price guide is downloaded once a day, in the background.
+    from . import cardmarket
+    root.after(5000, cardmarket.refresh_later)
+    sh_.add_tool("Update Cardmarket prices now", lambda: cardmarket.refresh_later(force=True))
     # The watch list checks itself once a week, in the background.
     root.after(4000, prices.auto_check_watch)
     root.mainloop()

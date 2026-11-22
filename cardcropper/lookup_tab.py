@@ -246,8 +246,9 @@ class LookupTab(ttk.Frame):
             .grid(row=6, column=0, sticky="w", pady=(8, 2))
         self.prices_lbl = ttk.Label(self.body, justify="left", wraplength=440)
         self.prices_lbl.grid(row=7, column=0, sticky="w")
-        ui.tip(self.prices_lbl, "TCGplayer (US dollars) and Cardmarket (euros), from the "
-                                "catalogue. A sense check, not a UK eBay price.")
+        ui.tip(self.prices_lbl, "TCGplayer (US dollars) from the catalogue, and Cardmarket "
+                                "(euros) from Cardmarket's own price guide, downloaded "
+                                "daily. A sense check, not a UK eBay price.")
 
         ttk.Label(self.body, text="Variant check", style="Small.TLabel")\
             .grid(row=8, column=0, sticky="w", pady=(8, 2))
@@ -444,12 +445,19 @@ class LookupTab(ttk.Frame):
 
         lines = []
         for label, v in card.prices.items():
+            # The catalogue's Cardmarket figures can be months old; today's
+            # come from Cardmarket's own price guide instead (below).
+            if label.startswith("Cardmarket"):
+                continue
             sym = "$" if "USD" in label else "€"
             if isinstance(v, dict):
                 lines.append(label + ": " + ", ".join(f"{k} {sym}{x:.2f}" for k, x in v.items()))
             else:
                 lines.append(f"{label}: {sym}{v:.2f}")
-        self.prices_lbl.configure(text="\n".join(lines) or "None in the catalogue.")
+        self._price_lines = (card.id, lines)
+        self.prices_lbl.configure(text="\n".join(lines + ["Cardmarket: loading today's price "
+                                                         "guide…"]))
+        self._want_cardmarket(card)
 
         for w in self.findings.winfo_children():
             w.destroy()
@@ -536,6 +544,25 @@ class LookupTab(ttk.Frame):
             self.search(title)
             self._pending_scan = front
         BatchCheck(self.winfo_toplevel(), folder, on_open=open_one)
+
+    def _want_cardmarket(self, card):
+        """Today's Cardmarket prices for the card, in the background (cardmarket.py)."""
+        def go():
+            try:
+                from . import cardmarket
+                found = cardmarket.price_for(card)
+                text = cardmarket.describe(found) or \
+                    "Cardmarket: no match for this card in today's price guide."
+            except Exception as exc:                          # noqa: BLE001
+                text = f"Cardmarket: price guide unavailable ({type(exc).__name__})."
+            self.events.put(("cardmarket", (card.id, text)))
+        threading.Thread(target=go, daemon=True).start()
+
+    def _on_cardmarket(self, payload):
+        card_id, text = payload
+        cur, lines = getattr(self, "_price_lines", (None, []))
+        if cur == card_id:
+            self.prices_lbl.configure(text="\n".join(lines + [text]))
 
     def match_scan(self, path):
         """Compare the scan at `path` with every current result's catalogue image."""

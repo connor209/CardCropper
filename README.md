@@ -833,9 +833,29 @@ searched again together — on demand, or by themselves once a week when the
 app opens signed in — and each shows how far it moved, green or red when it
 moved by more than one ladder step and by 20% or £2.
 
-**Reference prices.** Under the card, the catalogue's TCGplayer (USD) and
-Cardmarket (EUR) prices for the card its title finds — a cross-check, worth
-most when UK sales are few.
+**Reference prices.** Under the card, today's Cardmarket prices (see below)
+and the catalogue's TCGplayer (USD) prices for the card its title finds — a
+cross-check, worth most when UK sales are few. No price is worked out from
+them.
+
+**Cardmarket's price guide.** Cardmarket publishes, per game, its product list
+and price guide as files rebuilt daily (trend, average, low, 1/7/30-day
+averages, and the same for reverse holos or foils). The app downloads the
+Pokémon and Yu-Gi-Oh files once a day in the background (about 15 MB each,
+kept in `cardmarket/` in the settings folder; **Tools → Update Cardmarket
+prices now** fetches them at once) and works from the last copy offline. The
+catalogue APIs' own Cardmarket figures can be months old, so these replace
+them on the Market page and in Card lookup.
+
+The files name each set only by a number, so a set is recognised by its
+cards: the expansions holding a card of that name are compared with the
+catalogue's list of the card's set, and an expansion Cardmarket added around
+the set's release wins over a later re-release of the same cards. The answer
+is kept per set (`expansions-<game>.json`). A close call is marked *set
+match unsure*. Within a set, same-named Pokémon cards (alternate arts) are
+matched in card-number order and marked *check*; same-named Yu-Gi-Oh prints
+(several rarities) carry identical names in the file, so their range is shown
+— "4 versions, €10.51–€435.90" — rather than a guess.
 
 **History** keeps every search with the listings it found (`market.sqlite` in
 the settings folder), so a card can be looked at again later without
@@ -867,8 +887,8 @@ offline. (pokemontcg.io is sometimes slow or returns errors; search again. A
 key in `POKEMONTCG_API_KEY` raises its rate limit.) For each candidate:
 
 - **Printings** the card exists in (Normal, Holo, Reverse Holo, 1st Edition…)
-  and **reference prices** (TCGplayer market in USD, Cardmarket trend in EUR —
-  a cross-check, not eBay UK prices);
+  and **reference prices** (TCGplayer market in USD, and today's Cardmarket
+  price guide in EUR — a cross-check, not eBay UK prices);
 - the **variant check**: a printing named in the search ("Reverse Holo") is
   checked against the printings that exist — *Base Set Pikachu has no Reverse
   Holo* — and a card that also exists in another printing says so, to check

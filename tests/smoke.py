@@ -1521,6 +1521,8 @@ def main():
     features_smoke.main()
     from tests import catalog_smoke
     catalog_smoke.main()
+    from tests import cardmarket_smoke
+    cardmarket_smoke.main()
     from tests import window_smoke
     window_smoke.main()
 

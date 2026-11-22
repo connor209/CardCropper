@@ -264,11 +264,14 @@ class PricesTab(ttk.Frame):
                                "and flagged when its price moves.")
         self.trend_lbl = ttk.Label(head, style="Muted.TLabel")
         self.trend_lbl.grid(row=2, column=0, sticky="w")
-        self.ref_lbl = ttk.Label(head, style="Muted.TLabel")
-        self.ref_lbl.grid(row=3, column=0, sticky="w")
-        ui.tip(self.ref_lbl, "The catalogue's reference prices for the card its title finds "
-                             "— US TCGplayer and EU Cardmarket, not eBay UK. A cross-check, "
-                             "worth most when there are few UK sales.")
+        self.ref_lbl = ttk.Label(head, style="Muted.TLabel", justify="left")
+        self.ref_lbl.grid(row=3, column=0, columnspan=3, sticky="ew")
+        ui.wrap_to_width(self.ref_lbl)
+        ui.tip(self.ref_lbl, "Reference prices for the card its title finds: Cardmarket's own "
+                             "price guide (euros, downloaded daily) and TCGplayer (US). Not "
+                             "eBay UK — a cross-check, worth most when there are few UK "
+                             "sales. 'check' means the card has same-named versions in its "
+                             "set; 'unsure' that its set was a close match.")
         self.refs = {}
         ui.tip(self.use_btn, "Keep this price for this card at this condition. Batch & price "
                              "uses it for that card for the next "
@@ -1366,7 +1369,11 @@ class PricesTab(ttk.Frame):
     # ------------------------------------------------------------ reference prices
 
     def _want_ref(self, title):
-        """The catalogue's prices for the card, fetched once per title in the background."""
+        """
+        Reference prices for the card, fetched once per title in the background:
+        Cardmarket's own price guide (downloaded daily — cardmarket.py), and
+        TCGplayer from the catalogue.
+        """
         if title in self.refs:
             self._show_ref(title)
             return
@@ -1374,34 +1381,27 @@ class PricesTab(ttk.Frame):
         self.ref_lbl.configure(text="")
 
         def load():
+            lines = []
             try:
-                from . import catalog
+                from . import cardmarket, catalog
                 res = catalog.search(market.clean_query(title), limit=3)
-                text = ""
                 if res:
                     c = res[0]
-                    bits = []
-                    for source, val in (c.prices or {}).items():
-                        sym = "$" if "USD" in source else "€" if "EUR" in source else ""
-                        name = source.split(" (")[0]
-
-                        def fmt(v):
-                            try:
-                                return f"{sym}{float(v):.2f}"
-                            except (TypeError, ValueError):
-                                return str(v)
-                        if isinstance(val, dict):
-                            val = ", ".join(f"{k} {fmt(v)}" for k, v in list(val.items())[:2]
-                                            if v)
-                        elif val:
-                            val = fmt(val)
-                        if val:
-                            bits.append(f"{name} {val}")
-                    if bits:
-                        text = f"Reference ({c.name} {c.number}, {c.set_name}): " +                             " · ".join(bits[:3])
+                    try:
+                        cm = cardmarket.describe(cardmarket.price_for(c))
+                    except Exception:                         # noqa: BLE001
+                        cm = ""
+                    if cm:
+                        lines.append(cm)
+                    us = (c.prices or {}).get("TCGplayer market (USD)")
+                    if isinstance(us, dict) and us:
+                        lines.append("TCGplayer market: " + ", ".join(
+                            f"{k} ${float(v):.2f}" for k, v in list(us.items())[:2] if v))
+                    if lines:
+                        lines[0] = f"{c.name} {c.number}, {c.set_name} — " + lines[0]
             except Exception:                                 # noqa: BLE001
-                text = ""
-            self.events.put(("ref", (title, text)))
+                lines = []
+            self.events.put(("ref", (title, "\n".join(lines))))
         self._pool.submit(load)
 
     def _show_ref(self, title):
