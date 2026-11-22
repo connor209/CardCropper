@@ -517,6 +517,24 @@ def cu_tab_checks(work):
         check(any(c["sku"] == "KU2" and c["standing"] == "LP" for c in library.cards()),
               "an eye grade did not reach the grade library")
         win.destroy()
+
+        # Write change file: the eye grades become condition changes.
+        from tkinter import messagebox
+        said = []
+        real = messagebox.askyesno, messagebox.showinfo, messagebox.showerror
+        messagebox.askyesno = lambda t, m, **k: said.append(m) or False
+        messagebox.showinfo = messagebox.showerror = lambda t, m, **k: said.append(m)
+        os.remove(os.path.join(os.path.dirname(tab.job_path), "priced-KU.json"))
+        try:
+            tab.write_changes()
+        finally:
+            messagebox.askyesno, messagebox.showinfo, messagebox.showerror = real
+        cpath = os.path.join(os.path.dirname(tab.job_path), "changes-KU.json")
+        check(os.path.exists(cpath), f"no change file: {said}")
+        with open(cpath, encoding="utf-8") as fh:
+            ch = _json.load(fh)
+        conds = {c["sku"]: c["value"] for c in ch["changes"] if c["field"] == "condition"}
+        check(conds.get("KU2") == "LP", f"the eye grade is not in the change file: {ch}")
     finally:
         root.destroy()
 

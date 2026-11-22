@@ -77,6 +77,13 @@ class CardUploaderTab(ttk.Frame):
                                "1-6, saved to grades-<job>.csv beside the job and to the "
                                "grade library. Starts at the selected card, or the first "
                                "not graded.")
+        self.changes_btn = ttk.Button(bar, text="Write change file", command=self.write_changes)
+        self.changes_btn.grid(row=0, column=6, padx=(6, 0))
+        ui.tip(self.changes_btn, "Make changes-<job>.json beside the job: the conditions "
+                                 "from your grades, plus house prices and variant switches "
+                                 "when the job has them. Then, in the extension on the "
+                                 "job's CardUploader page: Apply a change file → check the "
+                                 "diff → Apply.")
         b = ttk.Button(bar, text="CardUploader jobs…", command=self._fetch)
         b.grid(row=0, column=2, padx=(6, 0))
         ui.tip(b, "Fetch a job from CardUploader with a token from the extension, or collect "
@@ -400,6 +407,46 @@ class CardUploaderTab(ttk.Frame):
             sku = sel.get("sku") if sel else None
         EyeGrader(self.winfo_toplevel(), self.job_path, self.job, start_sku=sku,
                   on_change=self._regraded)
+
+    def write_changes(self):
+        """changes-<job>.json from the grades (and prices and variants if there are any)."""
+        from tkinter import messagebox
+        if not self.job or not self.job_path:
+            messagebox.showinfo("Write change file", "Pick a job first.", parent=self)
+            return
+        import contextlib
+        import io
+        from . import cli_ops
+        folder = os.path.dirname(os.path.abspath(self.job_path))
+        name = self.job.get("jobName") or ""
+        argv = [self.job_path]
+        for flag, fname in (("--grades", f"grades-{name}.csv"),
+                            ("--variants", f"variant-queue-{name}.csv")):
+            if os.path.exists(os.path.join(folder, fname)):
+                argv += [flag, os.path.join(folder, fname)]
+        if os.path.exists(os.path.join(folder, f"priced-{name}.json")):
+            argv += ["--pricing", folder]
+        if "--grades" not in argv and len(argv) == 1:
+            messagebox.showinfo("Write change file", "Nothing to write yet: this job has no "
+                                "grades, prices or variant decisions. Grade by eye first.",
+                                parent=self)
+            return
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                cli_ops.changes_cmd(argv)
+        except (Exception, SystemExit) as exc:              # noqa: BLE001
+            messagebox.showerror("Write change file", f"Could not write it: {exc}\n\n"
+                                 + out.getvalue(), parent=self)
+            return
+        path = os.path.join(folder, f"changes-{name or 'job'}.json")
+        if messagebox.askyesno(
+                "Change file written",
+                out.getvalue().strip() + "\n\nNext, in Chrome: open this job on CardUploader → "
+                "CardCropper extension → Apply a change file → pick\n" + path
+                + "\n→ check the diff → Apply.\n\nOpen the folder now?", parent=self):
+            from .gui import _reveal
+            _reveal(folder)
 
     def _regraded(self):
         """A grade was keyed in the grading window: show it here too."""
