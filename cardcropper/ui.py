@@ -158,7 +158,7 @@ def apply_theme(root):
               bordercolor=[("active", C["accent_soft"])],
               foreground=[("disabled", C["faint"])])
     style.configure("Step.TButton", anchor="w", padding=(12, 6))
-    style.configure("Grade.TButton", font=("TkDefaultFont", 10, "bold"), padding=(6, 6))
+    style.configure("Grade.TButton", font=("TkDefaultFont", 10, "bold"), padding=(3, 5))
     for g, colour in GRADE_COLOURS.items():
         style.configure(f"{g}.Grade.TButton", foreground=colour)
     style.configure("TMenubutton", background=C["surface"], bordercolor=C["border"],

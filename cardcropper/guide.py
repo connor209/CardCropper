@@ -77,8 +77,10 @@ Adding the next folder starts a new batch, and the output follows it."""),
 1. Choose the CardUploader export; the output folder follows it.
 2. Prepare batch — downloads every card's scans, scores the back border, writes
    triage.csv (worst first) and conditioning-review.csv.
-3. Work down the table. Double-click a card to open the image worth looking at; stop when
-   the cards stop being interesting. Grade in conditioning-review.csv (Open review sheet).
+3. Work down the table. Select a card and grade it in the panel beside it: keys 1-6
+   pick the grade, Enter saves it to conditioning-review.csv and moves on. (Or grade in
+   the sheet itself — Open review sheet.) Stop when the cards stop being interesting.
+   A batch prepared earlier: Open prepared batch….
 4. Record grades & re-fit triage — teaches the triage from what you saw, and puts every
    grade in the Grade library.
 5. Write grades to a copy of the CSV — the original export is never changed.
@@ -276,6 +278,8 @@ TIPS = {
                          "stop.",
         "Open folder": "Open the output folder.",
         "Open review sheet": "Open conditioning-review.csv to type the grades in.",
+        "Open prepared batch…": "Open a batch prepared earlier — its output folder — to "
+                                "grade it here without preparing it again.",
         "Record grades & re-fit triage": "Record the looked-at grades, propose better triage "
                                          "thresholds from them, and add every grade to the "
                                          "Grade library.",
@@ -400,6 +404,10 @@ Grade
 
 Variants
   C  S  X                  correct · switch · HOLD
+
+Condition a CSV (table selected)
+  1-6                      pick NM / LP / MP / HP / DMG / HOLD
+  Enter                    save the grade and move to the next card
 
 Market
   Enter                    search sold listings

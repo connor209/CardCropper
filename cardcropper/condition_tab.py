@@ -46,6 +46,7 @@ class ConditionTab(ttk.Frame):
         self.stop_flag = threading.Event()
         self.records = []
         self.by_row = {}
+        self.grades = {}
         self._auto_out = ""
 
         self._build_inputs()
@@ -113,24 +114,42 @@ class ConditionTab(ttk.Frame):
         self.open_btn.grid(row=0, column=3, padx=(10, 0))
 
         ttk.Label(self, foreground="#666",
-                  text="Work down from the top. Double-click a card to open what is worth "
-                       "looking at; stop when the cards stop being interesting.")\
+                  text="Work down from the top: select a card and grade it on the right "
+                       "(keys 1-6, Enter saves and moves on). Double-click to open the "
+                       "image full size. Stop when the cards stop being interesting.")\
             .grid(row=2, column=0, sticky="w", pady=(8, 2))
 
     def _build_table(self):
-        wrap = ttk.Frame(self)
-        wrap.grid(row=3, column=0, sticky="nsew")
+        # The ranking on the left, the card selected in it on the right —
+        # graded there and then, without a spreadsheet (see review_panel).
+        from .review_panel import KEYS, ReviewPanel
+        pane = ttk.PanedWindow(self, orient="horizontal")
+        pane.grid(row=3, column=0, sticky="nsew")
+        wrap = ttk.Frame(pane)
         wrap.columnconfigure(0, weight=1)
         wrap.rowconfigure(0, weight=1)
-        cols = ("sku", "triage", "corner", "total", "copies", "title", "note")
+        pane.add(wrap, weight=3)
+        self.panel = ReviewPanel(pane, out_dir=lambda: self.out_var.get().strip(),
+                                 on_saved=self._graded_here)
+        pane.add(self.panel, weight=2)
+
+        # The table asks for every column's width and would squeeze the panel
+        # to a sliver, so the divider is placed once the window has a size.
+        def place(_e=None):
+            if pane.winfo_width() > 700 and not getattr(pane, "_placed", False):
+                pane._placed = True
+                pane.sashpos(0, pane.winfo_width() - 400)
+        pane.bind("<Configure>", place, add="+")
+        cols = ("sku", "triage", "grade", "corner", "total", "copies", "title", "note")
         self.tree = ttk.Treeview(wrap, columns=cols, show="headings", selectmode="browse")
-        for key, text, width, stretch in (("sku", "SKU", 140, False),
+        for key, text, width, stretch in (("sku", "SKU", 110, False),
                                           ("triage", "Triage", 90, False),
+                                          ("grade", "Grade", 56, False),
                                           ("corner", "Worst corner %", 115, False),
                                           ("total", "Wear %", 70, False),
                                           ("copies", "Copies", 55, False),
-                                          ("title", "Title", 300, True),
-                                          ("note", "Note", 260, True)):
+                                          ("title", "Title", 220, True),
+                                          ("note", "Note", 160, True)):
             self.tree.heading(key, text=text)
             self.tree.column(key, width=width, stretch=stretch,
                              anchor="e" if key in ("corner", "total", "copies") else "w")
@@ -141,10 +160,16 @@ class ConditionTab(ttk.Frame):
         for band, colour in BAND_COLOURS.items():
             self.tree.tag_configure(band, foreground=colour)
         self.tree.bind("<Double-1>", self.open_card)
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._picked())
+        for key, g in KEYS.items():
+            self.tree.bind(key, lambda _e, g=g: self.panel.pick(g))
+        self.tree.bind("<Return>", lambda _e: self.panel.save())
 
     def _build_after(self):
         box = ttk.LabelFrame(self, text="After grading conditioning-review.csv", padding=8)
         box.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        ttk.Button(box, text="Open prepared batch…",
+                   command=self.open_prepared).pack(side="left", padx=(0, 6))
         ttk.Button(box, text="Open review sheet",
                    command=self.open_review).pack(side="left")
         ttk.Button(box, text="Record grades & re-fit triage",
@@ -186,7 +211,8 @@ class ConditionTab(ttk.Frame):
         note = rec.get("note", "")
         if rec.get("check_back_era"):
             note = "WotC era — open front and back together. " + note
-        return (rec["sku"], rec["triage"], num("worst_corner_pct"), num("wear_total_pct"),
+        return (rec["sku"], rec["triage"], self.grades.get(rec["sku"], ""),
+                num("worst_corner_pct"), num("wear_total_pct"),
                 rec.get("copies", ""), rec["title"], note.strip())
 
     # ------------------------------------------------------------ actions
@@ -309,13 +335,84 @@ class ConditionTab(ttk.Frame):
             pass
         self.after(80, self._poll)
 
+    def _load_grades(self):
+        self.grades = {}
+        path = self._review_path()
+        if os.path.exists(path):
+            try:
+                for r in conditioning.read_review(path):
+                    g = (r.get("grade") or "").strip().upper()
+                    if g:
+                        self.grades[(r.get("sku") or "").strip()] = g
+            except OSError:
+                pass
+
+    def _show_records(self, records):
+        self.records = records
+        self._load_grades()
+        self.tree.delete(*self.tree.get_children())
+        self.by_row = {}
+        for rec in records:
+            row = self.tree.insert("", "end", values=self._row(rec), tags=(rec["triage"],))
+            self.by_row[row] = rec
+        kids = self.tree.get_children()
+        todo = [k for k in kids if not self.grades.get(self.by_row[k]["sku"])]
+        if todo or kids:
+            first = (todo or kids)[0]
+            self.tree.selection_set(first)
+            self.tree.see(first)
+
+    def _picked(self):
+        sel = self.tree.selection()
+        if sel and sel[0] in self.by_row:
+            self.panel.show(self.by_row[sel[0]])
+
+    def _graded_here(self, sku, grade):
+        """After a save in the panel: mark the row, and go to the next card."""
+        self.grades[sku] = grade
+        sel = self.tree.selection()
+        if not sel:
+            return
+        self.tree.set(sel[0], "grade", grade)
+        nxt = self.tree.next(sel[0])
+        if nxt:
+            self.tree.selection_set(nxt)
+            self.tree.see(nxt)
+            self.tree.focus(nxt)
+        left = sum(1 for r in self.records if not self.grades.get(r["sku"]))
+        self._say(f"{sku}: {grade}  ({left} card(s) still to grade)")
+
+    def open_prepared(self):
+        """A batch prepared earlier: its triage.csv, ranked as it was, ready to grade."""
+        folder = filedialog.askdirectory(title="A prepared batch's output folder "
+                                               "(the one holding triage.csv)")
+        if not folder:
+            return
+        path = os.path.join(folder, "triage.csv")
+        if not os.path.exists(path):
+            messagebox.showinfo(APP_NAME, "No triage.csv in that folder — choose the output "
+                                          "folder a Prepare run wrote to.")
+            return
+        import csv
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            records = list(csv.DictReader(fh))
+        for r in records:
+            for k in ("worst_corner_pct", "wear_total_pct", "border_base"):
+                try:
+                    r[k] = float(r[k])
+                except (KeyError, TypeError, ValueError):
+                    pass
+        self.out_var.set(folder)
+        self._auto_out = folder
+        self.open_btn.configure(state="normal")
+        self._show_records(records)
+        self._say(f"\nOpened {len(records)} card(s) from {path}. "
+                  f"{sum(1 for r in records if self.grades.get(r['sku']))} already graded.")
+
     def _finished(self, result):
         self.run_btn.configure(text="Prepare batch")
         self.open_btn.configure(state="normal")
-        self.records = result.records
-        for rec in result.records:
-            row = self.tree.insert("", "end", values=self._row(rec), tags=(rec["triage"],))
-            self.by_row[row] = rec
+        self._show_records(result.records)
         for line in result.summary():
             self._say(line)
         if result.warnings:

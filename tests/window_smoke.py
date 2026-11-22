@@ -156,6 +156,68 @@ def market_checks(work):
           f"sold search URL wrong: {url}")
 
 
+def review_panel_checks(work):
+    """Grading on the Condition tab writes the review sheet and the library."""
+    import tkinter as tk
+    from tkinter import filedialog
+    from cardcropper import conditioning, library, ui
+    from cardcropper.condition_tab import ConditionTab
+    from cardcropper.review_panel import read_sheet
+
+    out = os.path.join(work, "prepared")
+    for sku in ("KD1", "KD2"):
+        d = os.path.join(out, "cards", sku)
+        os.makedirs(d)
+        for n in ("corners-back.jpg", "crops-back.jpg", "front.jpg", "back.jpg"):
+            Image.new("RGB", (400, 560), (20, 30, 90)).save(os.path.join(d, n))
+    with open(os.path.join(out, "triage.csv"), "w", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=conditioning.TRIAGE_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        w.writerow({"sku": "KD1", "title": "Card one", "triage": "review",
+                    "worst_corner_pct": 1.5, "wear_total_pct": 0.3})
+        w.writerow({"sku": "KD2", "title": "Card two", "triage": "likely-nm",
+                    "worst_corner_pct": 0.1, "wear_total_pct": 0.0})
+    with open(os.path.join(out, "conditioning-review.csv"), "w", encoding="utf-8",
+              newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=conditioning.REVIEW_FIELDS + ["extra"])
+        w.writeheader()
+        for sku in ("KD1", "KD2"):
+            w.writerow({"sku": sku, "title": "t", "extra": "keep me"})
+
+    root = tk.Tk()
+    try:
+        ui.apply_theme(root)
+        page = tk.Frame(root)
+        page.pack(fill="both", expand=True)
+        tab = ConditionTab(page)
+        real = filedialog.askdirectory
+        filedialog.askdirectory = lambda **k: out
+        try:
+            tab.open_prepared()
+        finally:
+            filedialog.askdirectory = real
+        root.update()
+        check(tab.panel.rec and tab.panel.rec["sku"] == "KD1", "first ungraded card not shown")
+        tab.panel.pick("LP")
+        tab.panel.note_var.set("light crease top left")
+        tab.panel.save()
+        _, rows = read_sheet(tab._review_path())
+        check(not rows[0]["grade"], "an LP with a crease in its note was saved")
+        tab.panel.note_var.set("whitening on back corners")
+        tab.panel.save()
+        root.update()
+        _, rows = read_sheet(tab._review_path())
+        check(rows[0]["grade"] == "LP" and rows[0]["looked"] == "yes"
+              and rows[0]["extra"] == "keep me", f"review row wrong: {rows[0]}")
+        check(tab.panel.rec["sku"] == "KD2", "did not move on to the next card")
+        check(tab.tree.set(tab.tree.get_children()[0], "grade") == "LP", "row not marked")
+        library.flush()
+        check(any(c["sku"] == "KD1" and c["standing"] == "LP" for c in library.cards()),
+              "a grade saved on the Condition tab did not reach the library")
+    finally:
+        root.destroy()
+
+
 def window_checks():
     """Build the real window, every page, and check its catalogue of tips."""
     try:
@@ -165,6 +227,7 @@ def window_checks():
         print(f"  (no display — window not built: {exc})")
         return
     root.destroy()
+    review_panel_checks(tempfile.mkdtemp(prefix="cc-panel-"))
     from cardcropper import gui, guide, ui, updater
     import cardcropper.shell as shell_mod
 
