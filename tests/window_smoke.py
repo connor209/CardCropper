@@ -644,6 +644,52 @@ def grade_undo_checks(work):
         root.destroy()
 
 
+def chart_hover_checks():
+    """
+    The Market chart's hover bubble never covers its dot and takes no pointer
+    events — it used to overlap, and pointer-over-bubble = leave-dot looped
+    for ever (freeze report, 22 Nov 2026).
+    """
+    import datetime as _dt
+    import tkinter as tk
+    from cardcropper import pricing, ui
+    from cardcropper.prices_tab import PricesTab
+    root = tk.Tk()
+    try:
+        root.geometry("1200x800")
+        ui.apply_theme(root)
+        page = tk.Frame(root)
+        page.pack(fill="both", expand=True)
+        tab = PricesTab(page)
+        sold = [{"title": f"Lugia 78/124 Fates Collide #{i}", "price": 3 + i * 0.4,
+                 "postage": 0.5, "excluded_reason": None if i % 4 else "graded",
+                 "date": (_dt.date(2026, 11, 1) - _dt.timedelta(days=i * 3)).isoformat()}
+                for i in range(20)]
+        tab._fill([pricing.price_card("x", "Lugia 78/124 Fates Collide", sold)], {}, {})
+        root.update()
+        c = tab.chart
+        for i in range(len(tab.rows)):
+            dots = c.find_withtag(f"s{i}")
+            if not dots:
+                continue
+            dx0, dy0, dx1, dy1 = c.bbox(dots[0])
+            cx, cy = (dx0 + dx1) / 2, (dy0 + dy1) / 2
+            tab._hover(i, cx, cy)
+            items = c.find_withtag("hover")
+            check(items, "no hover bubble drawn")
+            check(all(c.itemcget(it, "state") == "disabled" for it in items),
+                  "the hover bubble must not take pointer events")
+            hx0, hy0, hx1, hy1 = c.bbox("hover")
+            overlap = not (hx1 < dx0 or hx0 > dx1 or hy1 < dy0 or hy0 > dy1)
+            check(not overlap, f"bubble {c.bbox('hover')} covers dot {(dx0, dy0, dx1, dy1)}")
+            before = c.find_withtag("hover")
+            tab._hover(i, cx, cy)
+            check(c.find_withtag("hover") == before, "a showing bubble was redrawn")
+            tab._unhover()
+    finally:
+        root.destroy()
+
+
 def window_checks():
     """Build the real window, every page, and check its catalogue of tips."""
     try:
@@ -653,6 +699,7 @@ def window_checks():
         print(f"  (no display — window not built: {exc})")
         return
     root.destroy()
+    chart_hover_checks()
     review_panel_checks(tempfile.mkdtemp(prefix="cc-panel-"))
     grade_undo_checks(tempfile.mkdtemp(prefix="cc-gundo-"))
     from cardcropper import gui, guide, ui, updater

@@ -968,6 +968,7 @@ class PricesTab(ttk.Frame):
     def _draw_chart(self, selected=None):
         c = self.chart
         c.delete("all")
+        self._hovering = None
         w, h = max(c.winfo_width(), 200), max(c.winfo_height(), 120)
         if not self.rows:
             c.create_text(w / 2, h / 2, text="Search for a card to see its sales here",
@@ -1043,21 +1044,40 @@ class PricesTab(ttk.Frame):
             dot = c.create_oval(cx - big, cy - big, cx + big, cy + big, tags=(f"s{i}",), **kw)
             c.tag_bind(dot, "<Button-1>", lambda _e, i=i: self._select_sale(i))
             c.tag_bind(dot, "<Enter>", lambda _e, i=i, cx=cx, cy=cy: self._hover(i, cx, cy))
-            c.tag_bind(dot, "<Leave>", lambda _e: c.delete("hover"))
+            c.tag_bind(dot, "<Leave>", lambda _e: self._unhover())
 
     def _hover(self, i, cx, cy):
+        """
+        A sale's details beside its dot.
+
+        The bubble must never come under the pointer. It used to overlap the
+        dot by a few pixels: pointing at that corner put the pointer over the
+        bubble, which counts as leaving the dot, which removed the bubble,
+        which put the pointer back on the dot — drawn and removed for ever,
+        and Windows called the app Not Responding (freeze report, 22 Nov).
+        So it sits well clear of the dot, takes no pointer events (disabled),
+        and a dot already showing its bubble is left alone.
+        """
+        if getattr(self, "_hovering", None) == i:
+            return
+        self._hovering = i
         state, why, s = self.rows[i]
         text = f"{_money(pricing.sale_total(s))}  {(s.get('date') or '')[:10]}\n" \
                f"{(s.get('title') or '')[:60]}" + (f"\n{why}" if why else "")
         c = self.chart
         c.delete("hover")
         anchor = "sw" if cx < c.winfo_width() * 0.6 else "se"
-        tid = c.create_text(cx + (8 if anchor == "sw" else -8), cy - 8, text=text,
-                            anchor=anchor, fill=ui.C["tip_fg"], font="CCSmall", tags=("hover",))
+        tid = c.create_text(cx + (16 if anchor == "sw" else -16), cy - 16, text=text,
+                            anchor=anchor, fill=ui.C["tip_fg"], font="CCSmall",
+                            tags=("hover",), state="disabled")
         x0, y0, x1, y1 = c.bbox(tid)
         bg = c.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill=ui.C["tip_bg"],
-                                outline="", tags=("hover",))
+                                outline="", tags=("hover",), state="disabled")
         c.tag_lower(bg, tid)
+
+    def _unhover(self):
+        self._hovering = None
+        self.chart.delete("hover")
 
     def _select_sale(self, i):
         if self.sales.exists(str(i)):
