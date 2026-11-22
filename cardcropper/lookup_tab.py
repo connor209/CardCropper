@@ -60,6 +60,9 @@ def _fit(im, w=IMG_W, h=IMG_H):
 
 
 class LookupTab(ttk.Frame):
+    EMPTY = ("Search for a card, then pick a row to see its printings, reference prices "
+             "and whether the printing you typed exists.")
+
     def __init__(self, master, on_price=None):
         super().__init__(master, padding=10)
         self.grid(sticky="nsew")
@@ -206,9 +209,7 @@ class LookupTab(ttk.Frame):
     def _build_detail(self):
         d = self.detail
         self.empty = ttk.Label(d, style="Muted.TLabel", wraplength=360, justify="left",
-                               text="Search for a card, then pick a row to see its printings, "
-                                    "reference prices and whether the printing you typed "
-                                    "exists.")
+                               text=self.EMPTY)
         self.empty.grid(row=0, column=0, sticky="nw")
         self.body = ttk.Frame(d)
         self.body.columnconfigure(0, weight=1)
@@ -366,10 +367,14 @@ class LookupTab(ttk.Frame):
         self._show_reading(res)
         self._fill()
         if not self.results:
-            self._say(f"Nothing in the catalogue for “{text}”. Try just the name, or check the "
-                      "game.", "warn")
+            msg = (f"Nothing in the catalogue for “{text}”. Check the spelling, try just the "
+                   "name, or the name and number (e.g. Charizard 4/102) — and that the game "
+                   "is right.")
+            self._say(msg, "warn")
+            self.empty.configure(text=msg, foreground=ui.C["warn"])
             self._show(None)
             return
+        self.empty.configure(text=self.EMPTY, foreground=ui.C["muted"])
         loose = " (a looser search: the set or number in the text did not match)" \
             if res.parsed.get("game") == "pokemon" and res.query and "set.name" not in res.query \
             and res.parsed.get("set_name") else ""

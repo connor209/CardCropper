@@ -354,6 +354,37 @@ def ebay_checks():
           "Pikachu 013/198 Scarlet & Violet Reverse Holo", catalog.title_for(modern))
 
 
+def split_set_checks():
+    """A set typed without a number, or misspelt, is found among the real set names."""
+    names = ["Obsidian Flames", "Silver Tempest", "Evolving Skies", "Base Set", "Base"]
+    for text, name, set_name in (("Charizard Obisidian Flames", "Charizard", "Obsidian Flames"),
+                                 ("Lugia V Silver Tempest", "Lugia V", "Silver Tempest"),
+                                 ("Umbreon VMAX Evolving Skys", "Umbreon VMAX",
+                                  "Evolving Skies")):
+        got = catalog.split_set(catalog.parse_title(text), names=names)
+        check(got and got["name"] == name and got["set_name"] == set_name,
+              f"{text!r} read as {got}")
+    check(catalog.split_set(catalog.parse_title("Charizard ex"), names=names) is None,
+          "a plain name was split")
+
+    def get(url, headers):
+        u = urllib.parse.unquote(url)
+        if u.endswith("/en/sets"):
+            return [{"id": "sv03", "name": "Obsidian Flames"}]
+        if u.endswith("/en/sets/sv03"):
+            return {"cards": [{"id": "sv03-125", "localId": "125", "name": "Charizard ex"},
+                              {"id": "sv03-001", "localId": "001", "name": "Oddish"}]}
+        if "/en/cards/" in u:
+            return {"id": "sv03-125", "localId": "125", "name": "Charizard ex",
+                    "set": {"name": "Obsidian Flames"}}
+        if "pokemontcg" in u or "/en/cards?" in u:
+            return {"data": []} if "pokemontcg" in u else []
+        raise AssertionError(f"unexpected url {url}")
+    r = catalog.search("Charizard Obisidian Flames", game="pokemon", get=get)
+    check(len(r) == 1 and r[0].set_name == "Obsidian Flames" and "read as Charizard" in r.query,
+          f"typed set not used: {[(c.name, c.set_name) for c in r]} {r.query}")
+
+
 def main():
     # Only meaningful run on its own: inside tests.smoke the window tests
     # have already imported Tk.
@@ -368,6 +399,7 @@ def main():
         ebay_checks()
         japanese_checks()
         fallback_checks()
+        split_set_checks()
         batch_checks(tempfile.mkdtemp(prefix="cc-batch-"))
         check(catalog.clear_cache() > 0 and not os.listdir(work), "cache cleared")
     finally:

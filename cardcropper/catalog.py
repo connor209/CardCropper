@@ -791,6 +791,86 @@ def search(text, game="auto", limit=30, get=None):
     parts["game"] = g
     if g == "yugioh":
         return search_yugioh(parts, limit, get)
+    try:
+        res, failed = _search_english(parts, limit, get), None
+    except Exception as exc:                                # noqa: BLE001
+        res, failed = Results([], "", parts), exc
+    if res:
+        return res
+    # Nothing: perhaps the set was typed without a number ("Charizard
+    # Obsidian Flames", read as one long name) or misspelt. Try again with
+    # the set found among the real set names.
+    better = split_set(parts, get=get)
+    if better:
+        again = _search_english(better, limit, get)
+        if again:
+            again.query += f" — read as {better['name']} from {better['set_name']}"
+            return again
+    if failed is not None:
+        raise failed
+    return res
+
+
+def english_sets(get=None):
+    """{set name: TCGdex set id} for every English Pokémon set, kept for a month."""
+    try:
+        rows = fetch_json(f"{TCGDEX}/en/sets", get=get, max_age=30 * 86400)
+    except Exception:                                       # noqa: BLE001
+        return {}
+    return {r["name"]: r.get("id", "") for r in rows or []
+            if isinstance(r, dict) and r.get("name")}
+
+
+def english_set_names(get=None):
+    return list(english_sets(get))
+
+
+def _close_set(text, names, cutoff=0.8):
+    import difflib
+    low = {n.lower(): n for n in names}
+    t = text.lower().strip()
+    if not t:
+        return ""
+    if t in low:
+        return low[t]
+    hit = difflib.get_close_matches(t, list(low), n=1, cutoff=cutoff)
+    return low[hit[0]] if hit else ""
+
+
+def split_set(parts, get=None, names=None):
+    """
+    A better reading of `parts` when the set is in the wrong place or
+    misspelt, or None:
+
+    * no number and no set: the last words of the name that make a real set
+      name become the set — "Charizard Obisidian Flames" → Charizard, from
+      Obsidian Flames;
+    * a set that is not a real one but close to one: corrected.
+    """
+    names = names if names is not None else english_set_names(get)
+    if not names:
+        return None
+    name, set_name = (parts.get("name") or "").strip(), (parts.get("set_name") or "").strip()
+    if set_name:
+        fixed = _close_set(set_name, names)
+        if fixed and fixed.lower() != set_name.lower():
+            return dict(parts, set_name=fixed)
+        return None
+    words = name.split()
+    # An exact set name first, the longest name before it kept ("Lugia V
+    # Silver Tempest" is Lugia V); then a misspelt one, the shortest first.
+    for k in range(1, len(words)):
+        fixed = _close_set(" ".join(words[k:]), names, cutoff=1.0)
+        if fixed:
+            return dict(parts, name=" ".join(words[:k]), set_name=fixed)
+    for k in range(len(words) - 1, 0, -1):
+        fixed = _close_set(" ".join(words[k:]), names)
+        if fixed:
+            return dict(parts, name=" ".join(words[:k]), set_name=fixed)
+    return None
+
+
+def _search_english(parts, limit, get):
     # pokemontcg.io is often down (HTTP 500s for minutes at a time); TCGdex
     # has the same English cards, with their Cardmarket ids. Either way the
     # person gets an answer.
@@ -826,7 +906,16 @@ def search_tcgdex_en(parts, limit=12, get=None):
         queries = [{"name": name, "localId": n} for n in dict.fromkeys(
             [number, number.zfill(3)])] + queries
     rows = []
-    for q in queries:
+    # A set named exactly: its own card list, filtered by name — exact, and
+    # one request instead of a card-by-card hunt through every set.
+    set_id = english_sets(get).get(parts.get("set_name") or "") if parts.get("set_name") else ""
+    if set_id:
+        got = fetch_json(f"{TCGDEX}/en/sets/{urllib.parse.quote(set_id)}", get=get)
+        low = name.lower()
+        rows = [r for r in ((got or {}).get("cards") or []) if isinstance(got, dict)
+                and low in (r.get("name") or "").lower()
+                and (not number or str(r.get("localId", "")).lstrip("0") == number.lstrip("0"))]
+    for q in ([] if rows else queries):
         got = fetch_json(f"{TCGDEX}/en/cards?" + urllib.parse.urlencode(q), get=get)
         rows = got if isinstance(got, list) else []
         if rows:
