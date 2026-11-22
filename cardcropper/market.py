@@ -295,7 +295,22 @@ def reasons(priced):
     return sorted(out.items(), key=lambda kv: -kv[1])
 
 
-def reprice(priced, left_out, variant_text="", counted=()):
+#: Comp Finder's reasons for leaving out a sale in another language. Read as
+#: a pattern, not a list: its exact wording is Comp Finder's ("foreign",
+#: "not_english", "language: japanese"…) and may change.
+_LANGUAGE = re.compile(r"foreign|language|english|japanese|korean|chinese|german|french|"
+                       r"italian|spanish|portuguese|\bjp\b|\bjpn\b", re.I)
+LANGUAGES = {"English only": "english", "All languages": "all"}
+
+
+def language_reasons(sold):
+    """The exclusion reasons in `sold` that are about the sale's language."""
+    return {s.get("excluded_reason") for s in sold or []
+            if s.get("excluded_reason") and _LANGUAGE.search(str(s["excluded_reason"]))
+            and not str(s["excluded_reason"]).endswith("(cardcropper)")}
+
+
+def reprice(priced, left_out, variant_text="", counted=(), language="english"):
     """
     `priced` worked again with the sales in `left_out` (sale keys) taken out
     by hand, and those in `counted` counted by hand — the "what if that one
@@ -311,9 +326,10 @@ def reprice(priced, left_out, variant_text="", counted=()):
         elif key in counted:
             s = dict(s, counted_by_hand=True)
         sold.append(s)
+    put_back = language_reasons(sold) if language == "all" else ()
     return pricing.price_card(priced.sku, priced.title, sold, priced.game, priced.condition,
                               current=priced.current, variant_text=variant_text,
-                              status=priced.status or "ok")
+                              status=priced.status or "ok", put_back=put_back)
 
 
 # ---------------------------------------------------------------- history
@@ -336,6 +352,9 @@ def connect(path=None):
         variant TEXT, source TEXT, searched_at REAL NOT NULL, n_kept INTEGER,
         n_found INTEGER, suggested REAL, query TEXT, evidence TEXT)""")
     db.execute("CREATE INDEX IF NOT EXISTS searches_title ON searches(title)")
+    cols = {r[1] for r in db.execute("PRAGMA table_info(searches)")}
+    if "language" not in cols:       # added after the first release of the table
+        db.execute("ALTER TABLE searches ADD COLUMN language TEXT")
     db.execute("""CREATE TABLE IF NOT EXISTS pictures (
         url TEXT PRIMARY KEY, image TEXT, checked_at REAL NOT NULL)""")
     db.commit()
@@ -343,16 +362,17 @@ def connect(path=None):
 
 
 def save_search(title, evidence, priced, game="pokemon", condition="NM", variant="",
-                source="comp-finder", path=None):
+                source="comp-finder", path=None, language="english"):
     """Keep one search and everything it found. Returns its id."""
     db = connect(path)
     try:
         cur = db.execute(
             "INSERT INTO searches (title, game, condition, variant, source, searched_at, "
-            "n_kept, n_found, suggested, query, evidence) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "n_kept, n_found, suggested, query, evidence, language) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (title, game, condition, variant, source, time.time(), priced.n_sales,
              len(priced.kept) + len(priced.excluded), priced.suggested,
-             (evidence or {}).get("query", ""), json.dumps(evidence or {})))
+             (evidence or {}).get("query", ""), json.dumps(evidence or {}), language))
         db.commit()
         return cur.lastrowid
     finally:

@@ -197,12 +197,14 @@ def band(n):
 
 
 def price_card(sku, title, sold, game="pokemon", condition="NM", current=None,
-               variant_text="", status="ok"):
+               variant_text="", status="ok", put_back=()):
     """
     House price for one card from Comp Finder's `sold[]` for it.
 
     `variant_text` is the card's own variant/finish (e.g. "Reverse Holofoil");
-    the printing is read off it and the title together.
+    the printing is read off it and the title together. `put_back` names more
+    of Comp Finder's exclusion reasons to count anyway, on top of PUT_BACK —
+    the Market page's "All languages" puts back its foreign-language ones.
     """
     floor = FLOORS.get(game, FLOORS["pokemon"])
     printing = printing_of(title) | printing_of(variant_text)
@@ -214,7 +216,7 @@ def price_card(sku, title, sold, game="pokemon", condition="NM", current=None,
             # Market page's "Count it anyway"): kept whatever the filters say.
             kept.append(dict(s, put_back=True))
             continue
-        if why and why not in PUT_BACK:
+        if why and why not in PUT_BACK and why not in put_back:
             excluded.append(dict(s, why=why))
             continue
         if not variant_ok(printing, s.get("title", "")):

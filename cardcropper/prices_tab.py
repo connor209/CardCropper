@@ -128,16 +128,29 @@ class PricesTab(ttk.Frame):
         c.grid(row=0, column=3, padx=6)
         ui.tip(c, "The condition to price for. LP and NM share a price; MP, HP and DMG "
                   "take the house cut off the LP price.")
+        from . import folders
+        saved = folders.load_settings().get("market_language", "English only")
+        self.lang_var = tk.StringVar(value=saved if saved in market.LANGUAGES
+                                     else "English only")
+        lang = ttk.Combobox(bar, values=tuple(market.LANGUAGES), width=13, state="readonly",
+                            textvariable=self.lang_var)
+        lang.grid(row=0, column=4, padx=(0, 6))
+        lang.bind("<<ComboboxSelected>>", lambda _e: self._language_changed())
+        ui.tip(lang, "Which sales count, by language. English only leaves out the sales "
+                     "Comp Finder marks as another language (foreign); All languages counts "
+                     "them too — for Japanese and other non-English cards, or a card that "
+                     "sells the same in any language. Switching re-prices what is on screen "
+                     "from the sales already found: no new search.")
         self.search_btn = ttk.Button(bar, text="Search sold", style="Accent.TButton",
                                      command=self.lookup)
-        self.search_btn.grid(row=0, column=4)
+        self.search_btn.grid(row=0, column=5)
         ui.tip(self.search_btn, lambda: (
             "Find this card's recent UK sold listings through Comp Finder and price it "
             "under the house rules. (Enter)" if pricing.comp_finder_cookie() else
             "Needs your Comp Finder login first — More → Comp Finder sign-in…  "
             "Until then, eBay ↗ opens the sold search in your browser."))
         b = ttk.Button(bar, text="eBay ↗", command=self.open_ebay)
-        b.grid(row=0, column=5, padx=(6, 0))
+        b.grid(row=0, column=6, padx=(6, 0))
         ui.tip(b, "Open eBay's own sold & completed listings for this title in your "
                   "browser — always works, no login needed.")
         more = ui.more_menu(bar, [
@@ -152,7 +165,7 @@ class PricesTab(ttk.Frame):
             ("Clear search history", self.clear_history),
         ], tip_text="Golden pricing test, priced batches, importing sales from Terapeak "
                     "or a sheet, and Comp Finder sign-in.")
-        more.grid(row=0, column=6, padx=(6, 0))
+        more.grid(row=0, column=7, padx=(6, 0))
 
         self.status = ttk.Label(self, style="Muted.TLabel", justify="left")
         self.status.grid(row=1, column=0, sticky="ew", pady=(6, 4))
@@ -486,17 +499,19 @@ class PricesTab(ttk.Frame):
                                              "eBay ↗ to search in your browser.)"):
                 self.set_login()
             return
-        game, cond = self._game(), self.cond_var.get()
+        game, cond, language = self._game(), self.cond_var.get(), self._lang()
 
         def run():
             ev = pricing.batch_comps([{"id": "lookup", "title": title}])
             r = ev.get("lookup") or {}
             p = pricing.price_card("lookup", title, r.get("sold"), game, cond,
                                    status=r.get("status", "ok"))
-            market.save_search(title, r, p, game, cond)
-            return [p], {}, ev, f"Searched “{title}” ({game}, {cond}) — " \
+            shown = market.reprice(p, set(), language=language) if language == "all" else p
+            market.save_search(title, r, shown, game, cond, language=language)
+            return [p], {}, ev, f"Searched “{title}” ({game}, {cond}, " \
+                                f"{'all languages' if language == 'all' else 'English only'}) — " \
                                 f"{len(p.kept) + len(p.excluded)} sale(s) found, " \
-                                f"{p.n_sales} counted"
+                                f"{shown.n_sales} counted"
         self._background(f"Searching sold listings for “{title}”…", run)
 
     def import_csv(self):
@@ -692,6 +707,9 @@ class PricesTab(ttk.Frame):
                                   foreground=ui.C["bad"])
             return
         self.title_var.set(row["title"])
+        for label, key in market.LANGUAGES.items():
+            if key == (row.get("language") or "english"):
+                self.lang_var.set(label)
         self._fill([p], {}, {"lookup": ev}, {"lookup": row.get("variant") or ""}, keep_tab=True)
         self.status.configure(
             text=f"From history — searched {market.ago(row['searched_at'])}, priced again "
@@ -712,9 +730,8 @@ class PricesTab(ttk.Frame):
         self.cards.delete(*self.cards.get_children())
         for i, p in enumerate(priced):
             exp, ok = expected.get(p.sku, (None, True))
-            price = _money(p.suggested) if p.suggested is not None else "no price"
-            self.cards.insert("", "end", iid=str(i), tags=() if ok else ("fail",), values=(
-                p.title, price, _money(exp), p.n_sales, p.decision))
+            self.cards.insert("", "end", iid=str(i), tags=() if ok else ("fail",),
+                              values=self._card_values(i, exp))
         ui.restripe(self.cards)
         if not keep_tab:
             self.lists.select(0)
@@ -727,17 +744,45 @@ class PricesTab(ttk.Frame):
         if sel:
             self.show(int(sel[0]))
 
-    def _whatif(self):
-        return bool(self.left_out.get(self.current) or self.counted.get(self.current))
+    def _lang(self):
+        return market.LANGUAGES.get(self.lang_var.get(), "english")
+
+    def _language_changed(self):
+        from . import folders
+        folders.save_settings(market_language=self.lang_var.get())
+        for i in range(len(self.priced)):
+            exp, _ = self.expected.get(self.priced[i].sku, (None, True))
+            if self.cards.exists(str(i)):
+                self.cards.item(str(i), values=self._card_values(i, exp))
+        self.show()
+
+    def _card_values(self, i, expected=None):
+        p = self._view(i)
+        price = _money(p.suggested) if p.suggested is not None else "no price"
+        return (p.title, price, _money(expected), p.n_sales, p.decision)
+
+    def _whatif(self, i=None):
+        i = self.current if i is None else i
+        return bool(self.left_out.get(i) or self.counted.get(i))
+
+    def _view(self, i, by_hand=True):
+        """
+        Card `i` as it should be shown: in the chosen language setting, and —
+        with `by_hand` — with the sales left out or counted by hand. The
+        evidence is Comp Finder's either way; only what counts changes.
+        """
+        p = self.priced[i]
+        language = self._lang()
+        if language == "english" and not (by_hand and self._whatif(i)):
+            return p
+        return market.reprice(p, self.left_out.get(i, set()) if by_hand else set(),
+                              self.variant_text.get(p.sku, ""),
+                              counted=self.counted.get(i, set()) if by_hand else (),
+                              language=language)
 
     def _shown(self):
-        """The card on screen, worked again if sales were left out or counted by hand."""
-        p = self.priced[self.current]
-        if self._whatif():
-            return market.reprice(p, self.left_out.get(self.current, set()),
-                                  self.variant_text.get(p.sku, ""),
-                                  counted=self.counted.get(self.current, set()))
-        return p
+        """The card on screen, worked again for language and anything done by hand."""
+        return self._view(self.current)
 
     def show(self, index=None):
         if index is not None:
@@ -745,8 +790,11 @@ class PricesTab(ttk.Frame):
         if self.current is None or self.current >= len(self.priced):
             return
         p = self._shown()
-        base = self.priced[self.current]
+        base = self._view(self.current, by_hand=False)
         whatif = self._whatif()
+        if self.cards.exists(str(self.current)):
+            exp, _ = self.expected.get(self.priced[self.current].sku, (None, True))
+            self.cards.item(str(self.current), values=self._card_values(self.current, exp))
         self.card_title.configure(text=p.title + (f"   ·   {p.condition}" if p.condition else ""))
         f = market.figures(p)
         price_note = f"{p.decision}: {p.reason}" if p.decision else ""
@@ -820,8 +868,10 @@ class PricesTab(ttk.Frame):
                 else ("mine" if mine else "out")
             iid = self.sales.insert("", "end", iid=str(i), tags=(tag,), values=(
                 ("by you" if s.get("counted_by_hand") else
-                 state + (" (put back)" if s.get("put_back") else "")),
-                why.replace("_", " "),
+                 "counted" if state == KEPT else state),
+                (f"{s['excluded_reason'].replace('_', ' ')}, counted"
+                 if state == KEPT and s.get("put_back") and s.get("excluded_reason")
+                 and not s.get("counted_by_hand") else why.replace("_", " ")),
                 _money(pricing.sale_total(s)), (s.get("date") or "")[:10], s.get("title", "")))
             if s.get("url"):
                 self.urls[iid] = s["url"]
@@ -963,7 +1013,9 @@ class PricesTab(ttk.Frame):
                 (f"Counted by you — Comp Finder had left it out "
                  f"({(s.get('excluded_reason') or 'no reason').replace('_', ' ')})"
                  if s.get("counted_by_hand") else
-                 "Counted" + (" — put back after Comp Finder's high-postage flag"
+                 "Counted" + (f" — Comp Finder flagged it "
+                              f"{(s.get('excluded_reason') or '').replace('_', ' ')}, which "
+                              "counts anyway (postage is capped; language per the setting)"
                               if s.get("put_back") else "")) if state == KEPT
                 else f"Left out — {why.replace('_', ' ')}"]
         skip = {"title", "price", "postage", "date", "url", "excluded_reason", "why",

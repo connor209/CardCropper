@@ -150,7 +150,8 @@ Price this on eBay sends the card to the Market page."""),
         title="Market — eBay sold listings",
         lead="Recent UK sales for any card, the price they make, and every listing behind it.",
         guide="""\
-Type a card or listing title and Search sold (Enter). Comp Finder finds the sales; the
+Type a card or listing title and Search sold (Enter). Language: English only, or All
+languages to count the sales Comp Finder marks foreign (Japanese cards and the like). Comp Finder finds the sales; the
 house rules make the price.
 
 • Figures — the suggested price, what it is built on, the spread of the sales.

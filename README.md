@@ -791,6 +791,15 @@ selected:
   name, `number/total` and set (and *Japanese* for a Japanese card).
 - **How this price was worked out** — the working, step by step.
 
+**Language.** Beside the condition, **English only** (the default) leaves out
+the sales Comp Finder marks as another language ("foreign"); **All languages**
+counts them — for Japanese and other non-English cards, or anything that sells
+the same in any language. Every other check still applies: graded slabs,
+other printings and lots stay out. Switching re-prices what is on screen from
+the sales already found, without searching again, and the choice is
+remembered (and kept with each search in History). Batch & price is
+unchanged: it still prices English sales only.
+
 **History** keeps every search with the listings it found (`market.sqlite` in
 the settings folder), so a card can be looked at again later without
 searching or logging in; it is priced again under today's rules when opened.

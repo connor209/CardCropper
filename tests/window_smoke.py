@@ -148,8 +148,26 @@ def market_checks(work):
     check(again.n_sales == 0 and again.suggested is None,
           "uncounting should restore Comp Finder's exclusions")
 
+    # All languages: Comp Finder's foreign-language exclusions count, nothing else does.
+    mixed = [dict(sold[0], excluded_reason="foreign"),
+             dict(sold[1], excluded_reason="not_english"),
+             dict(sold[2], excluded_reason="graded"),
+             dict(sold[3], excluded_reason=None),
+             dict(sold[4], title="Lugia 78/124 Reverse Holo Japanese", excluded_reason="foreign")]
+    eng = pricing.price_card("x", "Lugia 78/124 Fates Collide Pokemon NM", mixed)
+    check(eng.n_sales == 1, f"English only should count 1, got {eng.n_sales}")
+    anyl = market.reprice(eng, set(), language="all")
+    check(anyl.n_sales == 3, f"All languages should count 3 (not the graded one, not the "
+                             f"other printing), got {anyl.n_sales}: "
+                             f"{[s.get('why') for s in anyl.excluded]}")
+    back = market.reprice(anyl, set(), language="english")
+    check(back.n_sales == 1, "switching back to English only should leave them out again")
+    check(market.language_reasons(mixed) == {"foreign", "not_english"},
+          f"language reasons wrong: {market.language_reasons(mixed)}")
+
     sid = market.save_search("Lugia 78/124", {"sold": sold, "status": "ok"}, p)
     again, ev, row = market.load_search(sid)
+    check(row["language"] == "english", "a search's language was not kept")
     check(again.suggested == p.suggested, "a saved search priced differently on reopening")
     check(market.history()[0]["title"] == "Lugia 78/124", "history lost the search")
     market.forget(sid)
