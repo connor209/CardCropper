@@ -209,6 +209,11 @@ def price_card(sku, title, sold, game="pokemon", condition="NM", current=None,
     kept, excluded = [], []
     for s in sold or []:
         why = s.get("excluded_reason")
+        if s.get("counted_by_hand"):
+            # A person looked at this sale and says it is the card (the
+            # Market page's "Count it anyway"): kept whatever the filters say.
+            kept.append(dict(s, put_back=True))
+            continue
         if why and why not in PUT_BACK:
             excluded.append(dict(s, why=why))
             continue

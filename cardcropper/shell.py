@@ -219,6 +219,7 @@ class Shell:
         help_.add_command(label="Keyboard shortcuts",
                           command=lambda: ui.info_dialog(self.root, "Keyboard shortcuts",
                                                          guide.SHORTCUTS))
+        help_.add_command(label="Freeze reports…", command=self.open_freezes)
         help_.add_separator()
         help_.add_command(label="About CardCropper", command=self.about)
         bar.add_cascade(label="Help", menu=help_)
@@ -243,6 +244,14 @@ class Shell:
         from .gui import _reveal
         os.makedirs(settings_dir(), exist_ok=True)
         _reveal(settings_dir())
+
+    def open_freezes(self):
+        """The reports the watchdog wrote when the window stopped answering."""
+        from . import watchdog
+        from .gui import _reveal
+        os.makedirs(watchdog.folder(), exist_ok=True)
+        watchdog.mark_seen()
+        _reveal(watchdog.folder())
 
     def about(self):
         from . import updater

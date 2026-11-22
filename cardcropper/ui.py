@@ -611,3 +611,18 @@ def money(v, symbol="£"):
         return f"{symbol}{float(v):,.2f}"
     except (TypeError, ValueError):
         return ""
+
+
+def wrap_to_width(label, minimum=200):
+    """
+    Wrap a label's text to the width it is given. Changes only on a real
+    change of width: re-wrapping changes the label's own size, and reacting
+    to every pixel of that can bounce between two widths for ever — a
+    window that never stops laying itself out does not answer.
+    """
+    def on(e):
+        want = max(minimum, e.width - 4)
+        if abs(int(label.cget("wraplength") or 0) - want) > 24:
+            label.configure(wraplength=want)
+    label.bind("<Configure>", on)
+    return label

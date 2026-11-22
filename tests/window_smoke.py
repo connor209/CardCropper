@@ -135,6 +135,19 @@ def market_checks(work):
     check(any(s.get("why") == "graded" for s in back.excluded),
           "Comp Finder's own exclusion must survive a reprice")
 
+    # Comp Finder left them all out; a person counts two by hand.
+    refused = [dict(x, excluded_reason="number_mismatch") for x in sold[:5]]
+    none = pricing.price_card("x", "Raichu sv4a 056", refused)
+    check(none.suggested is None and market.reasons(none) == [("number_mismatch", 5)],
+          f"reasons wrong: {market.reasons(none)}")
+    two = market.reprice(none, set(), counted={market.sale_key(refused[0]),
+                                                market.sale_key(refused[1])})
+    check(two.n_sales == 2 and two.suggested is not None,
+          f"sales counted by hand were not counted: {two.n_sales}")
+    again = market.reprice(two, set())
+    check(again.n_sales == 0 and again.suggested is None,
+          "uncounting should restore Comp Finder's exclusions")
+
     sid = market.save_search("Lugia 78/124", {"sold": sold, "status": "ok"}, p)
     again, ev, row = market.load_search(sid)
     check(again.suggested == p.suggested, "a saved search priced differently on reopening")
@@ -336,6 +349,16 @@ def compfinder_checks():
           "sign-out left the session behind")
 
 
+def watchdog_checks():
+    """A freeze leaves a file saying where every thread was."""
+    from cardcropper import watchdog
+    path = watchdog.write(9.0)
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    check("stopped answering for 9s" in text and "watchdog_checks" in text,
+          f"freeze report lacks the stuck thread's stack: {text[:300]}")
+
+
 def window_checks():
     """Build the real window, every page, and check its catalogue of tips."""
     try:
@@ -417,6 +440,7 @@ def main():
     try:
         library_checks(work)
         market_checks(work)
+        watchdog_checks()
         window_checks()
     finally:
         for k, v in old.items():

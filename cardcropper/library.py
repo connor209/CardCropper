@@ -89,6 +89,13 @@ def connect(path=None):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     db = sqlite3.connect(path, timeout=10)
     db.row_factory = sqlite3.Row
+    # Write-ahead logging: background writers (pictures, grades) never make
+    # the window wait to read — a locked read on the window's thread is a
+    # frozen window.
+    try:
+        db.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.DatabaseError:
+        pass
     db.execute("""CREATE TABLE IF NOT EXISTS grades (
         id INTEGER PRIMARY KEY,
         sku TEXT NOT NULL, card TEXT, game TEXT, line TEXT, batch TEXT,

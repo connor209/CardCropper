@@ -48,6 +48,25 @@ def _money(v):
 #: look at its eBay page.
 THUMB = 112
 MAX_PICTURES = 60
+#: Longest side a listing photo is kept at. eBay pages often give 1600px;
+#: anything resized on the window's own thread must already be small.
+PICTURE_MAX = 400
+
+
+def _prepared(img):
+    """
+    A listing photo made ready on the loading thread, so the window only has
+    to show it: shrunk to PICTURE_MAX, with its grid thumbnail cut too.
+    """
+    from PIL import Image
+    if img is None:
+        return None
+    img = img.convert("RGB")
+    img.thumbnail((PICTURE_MAX, PICTURE_MAX), Image.LANCZOS)
+    thumb = img.copy()
+    thumb.thumbnail((THUMB, THUMB), Image.LANCZOS)
+    img.thumb = thumb
+    return img
 
 
 class PricesTab(ttk.Frame):
@@ -66,6 +85,7 @@ class PricesTab(ttk.Frame):
         self.variant_text = {}
         self.current = None          # index into self.priced
         self.left_out = {}           # card index -> set of sale keys left out by hand
+        self.counted = {}            # card index -> set of sale keys counted by hand
         self.rows = []               # [(state, why, sale)] for the card on screen
         self.urls = {}
         self.photos = []
@@ -137,8 +157,7 @@ class PricesTab(ttk.Frame):
         self.status = ttk.Label(self, style="Muted.TLabel", justify="left")
         self.status.grid(row=1, column=0, sticky="ew", pady=(6, 4))
         # Wrapped to the window, so a long message is read whole, not cut off.
-        self.status.bind("<Configure>", lambda e: self.status.configure(
-            wraplength=max(200, e.width - 4)))
+        ui.wrap_to_width(self.status)
         self._login_hint()
 
     def _build_body(self):
@@ -237,13 +256,16 @@ class PricesTab(ttk.Frame):
         self.reset_btn = ttk.Button(top, text="Reset what-if", style="Ghost.TButton",
                                     command=self.reset_whatif, state="disabled")
         self.reset_btn.pack(side="right")
-        ui.tip(self.reset_btn, "Put back every sale you left out by hand.")
+        ui.tip(self.reset_btn, "Undo every sale you left out or counted by hand.")
+        self.why_lbl = ttk.Label(sales, style="Muted.TLabel", justify="left")
+        self.why_lbl.grid(row=2, column=0, sticky="ew", pady=(4, 0))
+        ui.wrap_to_width(self.why_lbl)
         self.sales_views = ttk.Notebook(sales)
         self.sales_views.grid(row=1, column=0, sticky="nsew")
         wrap, self.sales = ui.tree(self.sales_views, (
-            ("state", "Counted?", 70), ("total", "Total", 62, {"anchor": "e"}),
-            ("date", "Sold", 88), ("title", "Listing title", 300, {"stretch": True}),
-            ("why", "Why left out", 150)), height=8)
+            ("state", "Counted?", 96), ("why", "Why left out", 150),
+            ("total", "Total", 62, {"anchor": "e"}), ("date", "Sold", 88),
+            ("title", "Listing title", 300, {"stretch": True})), height=8)
         self.sales_views.add(wrap, text="List")
         gallery = ttk.Frame(self.sales_views)
         gallery.columnconfigure(0, weight=1)
@@ -268,11 +290,13 @@ class PricesTab(ttk.Frame):
         self.sales.tag_configure("out", foreground=ui.C["faint"])
         self.sales.tag_configure("kept", foreground=ui.C["ok"])
         self.sales.tag_configure("mine", foreground=ui.C["bad"])
+        self.sales.tag_configure("yours", foreground=ui.C["accent"])
         self.sales.bind("<<TreeviewSelect>>", lambda _e: self._picked_sale())
         self.sales.bind("<Double-1>", lambda _e: self.open_listing())
         self.sales.bind("<Delete>", lambda _e: self.toggle_sale())
         ui.tip(self.sales, "Select a sale for its details. Double-click to open it on eBay; "
-                           "Delete leaves it out (or puts it back) to see the price without it.")
+                           "Delete leaves a counted sale out, or counts a left-out one — "
+                           "a what-if, to see the price either way.")
         lower.add(sales, weight=3)
 
         detail = ttk.Frame(lower, padding=(10, 0, 0, 0), width=300)
@@ -299,8 +323,10 @@ class PricesTab(ttk.Frame):
         self.toggle_btn = ttk.Button(btns, text="Leave out", command=self.toggle_sale,
                                      state="disabled")
         self.toggle_btn.pack(side="left", padx=(6, 0))
-        ui.tip(self.toggle_btn, "What if this sale had not counted? Works the price again "
-                                "without it (or with it back). Nothing on a listing changes.")
+        ui.tip(self.toggle_btn, "What if this sale had (or had not) counted? Leave out a "
+                                "counted sale, or count one that was left out when you can "
+                                "see it is the same card — the price is worked again. "
+                                "Nothing on a listing changes.")
         copy = ttk.Button(btns, text="Copy title", style="Ghost.TButton",
                           command=lambda: self._copy_sale_title())
         copy.pack(side="left", padx=(6, 0))
@@ -338,8 +364,12 @@ class PricesTab(ttk.Frame):
         self.worker.start()
 
     def _poll(self):
+        # A few events per tick, not the whole queue: sixty pictures landing
+        # at once must not hold the window for seconds before it can redraw.
+        budget = 12
         try:
-            while True:
+            while budget:
+                budget -= 1
                 kind, payload = self.events.get_nowait()
                 if kind == "err":
                     self.search_btn.configure(state="normal")
@@ -361,7 +391,7 @@ class PricesTab(ttk.Frame):
                     self.refresh_history()
         except queue.Empty:
             pass
-        self.after(150, self._poll)
+        self.after(150 if budget else 15, self._poll)
 
     def _login_refused(self, exc):
         """
@@ -552,8 +582,18 @@ class PricesTab(ttk.Frame):
                     if "invalid" in text.lower() and "credential" in text.lower():
                         text = "That email and password were not accepted."
                     result = (False, f"Could not sign in: {text}")
-                self.after(0, lambda: done(*result))
+                answer.append(result)
+            answer = []
             threading.Thread(target=run, daemon=True).start()
+
+            # Tk is only touched from the window's own thread: the sign-in
+            # thread leaves its answer here, and this picks it up.
+            def wait():
+                if answer:
+                    done(*answer[0])
+                elif top.winfo_exists():
+                    top.after(100, wait)
+            top.after(100, wait)
 
         def sign_out():
             compfinder_auth.sign_out()
@@ -668,6 +708,7 @@ class PricesTab(ttk.Frame):
         self.priced, self.expected, self.evidence = priced, expected, evidence
         self.variant_text = variants or {}
         self.left_out = {}
+        self.counted = {}
         self.cards.delete(*self.cards.get_children())
         for i, p in enumerate(priced):
             exp, ok = expected.get(p.sku, (None, True))
@@ -686,12 +727,16 @@ class PricesTab(ttk.Frame):
         if sel:
             self.show(int(sel[0]))
 
+    def _whatif(self):
+        return bool(self.left_out.get(self.current) or self.counted.get(self.current))
+
     def _shown(self):
-        """The card on screen, worked again if sales were left out by hand."""
+        """The card on screen, worked again if sales were left out or counted by hand."""
         p = self.priced[self.current]
-        out = self.left_out.get(self.current)
-        if out:
-            return market.reprice(p, out, self.variant_text.get(p.sku, ""))
+        if self._whatif():
+            return market.reprice(p, self.left_out.get(self.current, set()),
+                                  self.variant_text.get(p.sku, ""),
+                                  counted=self.counted.get(self.current, set()))
         return p
 
     def show(self, index=None):
@@ -701,7 +746,7 @@ class PricesTab(ttk.Frame):
             return
         p = self._shown()
         base = self.priced[self.current]
-        whatif = bool(self.left_out.get(self.current))
+        whatif = self._whatif()
         self.card_title.configure(text=p.title + (f"   ·   {p.condition}" if p.condition else ""))
         f = market.figures(p)
         price_note = f"{p.decision}: {p.reason}" if p.decision else ""
@@ -733,13 +778,26 @@ class PricesTab(ttk.Frame):
         if row.get("query"):
             lines.insert(0, f"Searched: {row['query']}")
         if whatif:
-            lines.insert(0, f"WHAT-IF: {len(self.left_out[self.current])} sale(s) left out by "
-                            "hand. Nothing on a listing has changed.")
+            lines.insert(0, f"WHAT-IF: {len(self.left_out.get(self.current, ()))} sale(s) "
+                            f"left out and {len(self.counted.get(self.current, ()))} counted "
+                            "by hand. Nothing on a listing has changed.")
         self.working.configure(state="normal")
         self.working.delete("1.0", "end")
         self.working.insert("end", "\n".join(lines))
         self.working.configure(state="disabled")
         self.rows = market.all_sales(p)
+        why = market.reasons(p)
+        if why:
+            note = f"Left out {len(p.excluded)}: " + ", ".join(
+                f"{n} {r.replace('_', ' ')}" for r, n in why) + "."
+            if not p.kept:
+                note += (" None counted — check the reasons. Comp Finder matches by the "
+                         "listing-title form (name, number/total, set, and Japanese if it "
+                         "is): try searching that way, or select a sale and Count it anyway.")
+            self.why_lbl.configure(text=note, foreground=ui.C["warn"] if not p.kept
+                                   else ui.C["muted"])
+        else:
+            self.why_lbl.configure(text="")
         self._fill_sales()
         self._draw_chart()
 
@@ -758,11 +816,13 @@ class PricesTab(ttk.Frame):
             if state != KEPT and not self.show_out.get():
                 continue
             mine = why == market.LEFT_OUT
-            tag = "kept" if state == KEPT else ("mine" if mine else "out")
+            tag = ("yours" if s.get("counted_by_hand") else "kept") if state == KEPT \
+                else ("mine" if mine else "out")
             iid = self.sales.insert("", "end", iid=str(i), tags=(tag,), values=(
-                state + (" (put back)" if s.get("put_back") else ""),
-                _money(pricing.sale_total(s)), (s.get("date") or "")[:10], s.get("title", ""),
-                why))
+                ("by you" if s.get("counted_by_hand") else
+                 state + (" (put back)" if s.get("put_back") else "")),
+                why.replace("_", " "),
+                _money(pricing.sale_total(s)), (s.get("date") or "")[:10], s.get("title", "")))
             if s.get("url"):
                 self.urls[iid] = s["url"]
         self._clear_sale()
@@ -788,7 +848,13 @@ class PricesTab(ttk.Frame):
         # would otherwise flatten every real sale onto the bottom line.
         # Anything above the scale is pinned to the top with a marker.
         kept = [tot for _, _, tot, state, _ in pts if state == KEPT]
-        top = max(kept or [tot for _, _, tot, _, _ in pts]) * 1.25 or 1
+        everything = sorted(tot for _, _, tot, _, _ in pts)
+        # With a few sales counted, scale to the bulk of all of them instead:
+        # one counted sale would pin every other dot to the top.
+        if len(kept) < 3:
+            middle = everything[len(everything) // 2] or 1
+            kept = [t for t in everything if t <= 3 * middle] or everything
+        top = max(kept) * 1.25 or 1
         for line in (p.suggested, p.basis):
             if line:
                 top = max(top, line * 1.15)
@@ -894,19 +960,24 @@ class PricesTab(ttk.Frame):
                 + (" (capped at £4 in the total)" if float(s.get("postage") or 0) >
                    pricing.POSTAGE_CAP else ""),
                 f"Sold {(s.get('date') or 'date unknown')[:10]}",
-                "Counted" + (" — put back after Comp Finder's high-postage flag"
-                             if s.get("put_back") else "") if state == KEPT
-                else f"Left out — {why}"]
+                (f"Counted by you — Comp Finder had left it out "
+                 f"({(s.get('excluded_reason') or 'no reason').replace('_', ' ')})"
+                 if s.get("counted_by_hand") else
+                 "Counted" + (" — put back after Comp Finder's high-postage flag"
+                              if s.get("put_back") else "")) if state == KEPT
+                else f"Left out — {why.replace('_', ' ')}"]
         skip = {"title", "price", "postage", "date", "url", "excluded_reason", "why",
-                "put_back"}
+                "put_back", "counted_by_hand"}
         for k, v in s.items():
             if k not in skip and v not in (None, "", [], {}) and not market.image_in({k: v}):
                 info.append(f"{k.replace('_', ' ').capitalize()}: {v}")
         self.sale_info.configure(text="\n".join(info))
         self.open_btn.configure(state="normal" if s.get("url") else "disabled")
         mine = why == market.LEFT_OUT
-        self.toggle_btn.configure(state="normal" if state == KEPT or mine else "disabled",
-                                  text="Put back" if mine else "Leave out")
+        self.toggle_btn.configure(
+            state="normal",
+            text="Put back" if mine else "Uncount" if s.get("counted_by_hand") else
+            "Leave out" if state == KEPT else "Count it anyway")
         self._draw_chart(selected=str(i))
         self._show_pic(None, waiting=True)
         self._want(s)
@@ -934,7 +1005,7 @@ class PricesTab(ttk.Frame):
                 url = market.image_in(sale) or market.listing_image(sale.get("url", ""))
                 if url:
                     from .variant_tab import fetch_image
-                    img = fetch_image(market.sized(url, 500))
+                    img = _prepared(fetch_image(market.sized(url, 500)))
             except Exception:                                 # noqa: BLE001
                 img = None
             self.events.put(("pic", (key, img)))
@@ -958,9 +1029,12 @@ class PricesTab(ttk.Frame):
                 "No picture could be found for this sale.\nClick to open it on eBay."
                 if url else "No picture, and no link, came with this sale."))
             return
-        k = min(w / img.size[0], h / img.size[1])
-        img = img.resize((max(1, int(img.size[0] * k)), max(1, int(img.size[1] * k))),
-                         Image.LANCZOS)
+        k = min(w / img.size[0], h / img.size[1], 1.0)
+        if k < 1:
+            # Already no bigger than PICTURE_MAX (see _prepared), so this is
+            # a small, quick resize.
+            img = img.resize((max(1, int(img.size[0] * k)), max(1, int(img.size[1] * k))),
+                             Image.BILINEAR)
         photo = ImageTk.PhotoImage(img)
         self.photos = [photo]
         self.pic.create_image(w / 2, h / 2, image=photo)
@@ -998,7 +1072,7 @@ class PricesTab(ttk.Frame):
                           fill=ui.C["text"] if state == KEPT else ui.C["faint"],
                           text=f"{_money(pricing.sale_total(s))}  "
                                f"{(s.get('date') or '')[:10]}\n"
-                               + ("counted" if state == KEPT else why)[:24])
+                               + ("counted" if state == KEPT else why.replace("_", " "))[:24])
             g.tag_bind(tag, "<Button-1>", lambda _e, i=i: self._select_sale(i))
             g.tag_bind(tag, "<Double-1>", lambda _e: self.open_listing())
             self._cells[market.sale_key(s)] = (i, x, y)
@@ -1012,7 +1086,7 @@ class PricesTab(ttk.Frame):
             self._mark_gallery(sel[0])
 
     def _draw_thumb(self, key):
-        from PIL import Image, ImageTk
+        from PIL import ImageTk
         cell = getattr(self, "_cells", {}).get(key)
         if cell is None or not self.gallery.winfo_ismapped():
             return
@@ -1028,9 +1102,7 @@ class PricesTab(ttk.Frame):
             g.create_text(x + THUMB / 2, y + THUMB / 2, text="no picture", fill=ui.C["faint"],
                           font="CCSmall", tags=(f"img{i}", f"cell{i}"))
             return
-        im = img.copy()
-        im.thumbnail((THUMB, THUMB), Image.LANCZOS)
-        photo = ImageTk.PhotoImage(im)
+        photo = ImageTk.PhotoImage(img.thumb)
         self.thumbs.append(photo)
         g.create_image(x + THUMB / 2, y + THUMB / 2, image=photo, tags=(f"img{i}", f"cell{i}"))
 
@@ -1058,14 +1130,17 @@ class PricesTab(ttk.Frame):
         if not sel or self.current is None:
             return
         state, why, s = self.rows[int(sel[0])]
-        if state != KEPT and why != market.LEFT_OUT:
-            return
         key = market.sale_key(s)
         out = self.left_out.setdefault(self.current, set())
+        counted = self.counted.setdefault(self.current, set())
         if key in out:
-            out.discard(key)
+            out.discard(key)                    # put back
+        elif key in counted:
+            counted.discard(key)                # uncount
+        elif state == KEPT:
+            out.add(key)                        # leave out
         else:
-            out.add(key)
+            counted.add(key)                    # count it anyway
         self.show()
         for i, (_, _, s2) in enumerate(self.rows):
             if market.sale_key(s2) == key and self.sales.exists(str(i)):
@@ -1076,4 +1151,5 @@ class PricesTab(ttk.Frame):
     def reset_whatif(self):
         if self.current is not None:
             self.left_out.pop(self.current, None)
+            self.counted.pop(self.current, None)
             self.show()

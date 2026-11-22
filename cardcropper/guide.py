@@ -156,7 +156,8 @@ house rules make the price.
 • Figures — the suggested price, what it is built on, the spread of the sales.
 • Chart — every sale over time; click a dot for that listing.
 • Listings — why each counted or was left out. Double-click to open on eBay.
-• Leave out a sale that looks wrong to see the price without it (a what-if only).
+• Leave out a sale that looks wrong — or Count it anyway when Comp Finder left out one
+  that is plainly the card — to see the price either way (a what-if only).
 
 History keeps every search with its listings. More ▾ has the golden test, priced batches,
 importing sales from a Terapeak CSV, and Comp Finder sign-in."""),
@@ -416,7 +417,7 @@ Condition a CSV (table selected)
 
 Market
   Enter                    search sold listings
-  Delete                   leave the selected sale out (or put it back) — a what-if
+  Delete                   leave the selected sale out, or count a left-out one — a what-if
   Double-click a sale      open the listing on eBay
 """
 

@@ -826,6 +826,8 @@ def main():
     root.geometry(f"{min(1360, sw - 60)}x{min(900, sh - 90)}")
     root.minsize(960, 600)
     ui.apply_theme(root)
+    from . import watchdog
+    watchdog.start(root)
 
     settings = folders.load_settings()
     # Imported here rather than at the top: the split tab borrows from this
@@ -908,6 +910,19 @@ def main():
             state="normal", text="Check for updates"))
     check_btn.configure(command=check_updates)
     check_btn.pack(side="right")
+
+    # The app froze last time: say so once, and where the report is, so it
+    # can be sent rather than described.
+    froze = watchdog.unseen()
+    if froze:
+        def told():
+            watchdog.mark_seen()
+            sh_.open_freezes()
+        sh_.status("freeze", f"⚠ The app stopped responding {len(froze)} time(s) — "
+                             "a report was saved (click)",
+                   "When the window stops answering, CardCropper writes down where it was "
+                   "stuck. Click to open the reports — sending one in is the quickest way "
+                   "to get the freeze fixed.", command=told)
 
     # Open on whichever page was in use last — someone who starts the day by
     # making folders should not have to click across to them every time.

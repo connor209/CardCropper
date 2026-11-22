@@ -781,9 +781,14 @@ selected:
   A photo comes from the sale itself when Comp Finder sends one; otherwise
   it is read once from the listing's eBay page and remembered in
   `market.sqlite`, so looking again costs nothing.
-- **Leave out** (or Delete) works the price again without that sale — the
-  "what if that one was a mistake?" — and **Put back** / **Reset what-if**
-  undo it. A what-if changes nothing on any listing.
+- **Leave out** (or Delete) works the price again without a counted sale —
+  the "what if that one was a mistake?" — and **Count it anyway** does the
+  opposite for a sale Comp Finder left out that is plainly the card.
+  **Put back** / **Uncount** / **Reset what-if** undo it. A what-if changes
+  nothing on any listing. The line under the listings says why the rest were
+  left out ("Left out 23: 23 number mismatch"); when nothing counted, it is
+  usually the search's wording — Comp Finder matches the listing-title form,
+  name, `number/total` and set (and *Japanese* for a Japanese card).
 - **How this price was worked out** — the working, step by step.
 
 **History** keeps every search with the listings it found (`market.sqlite` in
@@ -863,6 +868,15 @@ CardCropper.exe --cli condition export.csv --out batch-GA --limit 10 --upload
 CardCropper.exe --cli calibrate --review batch-GA\conditioning-review.csv [--adopt]
 CardCropper.exe --cli apply export.csv --review batch-GA\conditioning-review.csv
 ```
+
+## If the window stops responding
+
+A watchdog notices when the window stops answering for 8 seconds and writes
+down where every part of the app was at that moment —
+`freezes/freeze-<time>.txt` in the settings folder (**Help → Freeze
+reports…**). Next time the app opens, the status bar says a report was saved.
+Sending that file in is the quickest way to get a freeze fixed: it names the
+exact line the window was stuck on.
 
 ## Building the .exe
 

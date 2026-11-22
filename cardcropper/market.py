@@ -268,6 +268,8 @@ def evidence_of(priced):
     sold = []
     for s in priced.kept:
         d = {k: v for k, v in s.items() if k not in ("put_back", "why")}
+        if d.get("counted_by_hand"):
+            d.pop("counted_by_hand")
         sold.append(d)
     for s in priced.excluded:
         d = {k: v for k, v in s.items() if k != "why"}
@@ -281,16 +283,33 @@ def evidence_of(priced):
 LEFT_OUT = "left out by you"
 
 
-def reprice(priced, left_out, variant_text=""):
+def reasons(priced):
+    """
+    Why the sales that did not count were left out, most common first —
+    [(reason, n)] — for the one line above the listings.
+    """
+    out = {}
+    for s in priced.excluded:
+        why = s.get("why") or "?"
+        out[why] = out.get(why, 0) + 1
+    return sorted(out.items(), key=lambda kv: -kv[1])
+
+
+def reprice(priced, left_out, variant_text="", counted=()):
     """
     `priced` worked again with the sales in `left_out` (sale keys) taken out
-    by hand — the "what if that one was a mistake?" a person asks of an odd
-    sale. Same rules, same rounding; only the evidence changes.
+    by hand, and those in `counted` counted by hand — the "what if that one
+    was a mistake?" a person asks of an odd sale, either way round. Same
+    rules, same rounding; only the evidence changes.
     """
     sold = []
     for s in evidence_of(priced):
-        if sale_key(s) in left_out:
+        s = {k: v for k, v in s.items() if k != "counted_by_hand"}
+        key = sale_key(s)
+        if key in left_out:
             s = dict(s, excluded_reason=LEFT_OUT)
+        elif key in counted:
+            s = dict(s, counted_by_hand=True)
         sold.append(s)
     return pricing.price_card(priced.sku, priced.title, sold, priced.game, priced.condition,
                               current=priced.current, variant_text=variant_text,
@@ -305,6 +324,13 @@ def connect(path=None):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     db = sqlite3.connect(path, timeout=10)
     db.row_factory = sqlite3.Row
+    # Write-ahead logging: background writers (pictures, grades) never make
+    # the window wait to read — a locked read on the window's thread is a
+    # frozen window.
+    try:
+        db.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.DatabaseError:
+        pass
     db.execute("""CREATE TABLE IF NOT EXISTS searches (
         id INTEGER PRIMARY KEY, title TEXT NOT NULL, game TEXT, condition TEXT,
         variant TEXT, source TEXT, searched_at REAL NOT NULL, n_kept INTEGER,
