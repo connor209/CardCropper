@@ -270,8 +270,18 @@ class PricesTab(ttk.Frame):
                              f"{market.DECISION_DAYS} days instead of working one out — "
                              "labelled 'your price' in the report.")
 
-        stats = ttk.Frame(right)
-        stats.grid(row=1, column=0, sticky="ew", pady=(6, 6))
+        # Two rows, by where the figures come from: eBay UK's sold listings
+        # (via Comp Finder) on top; your own records and the reference prices
+        # below — each box's colour strip and tag say its source.
+        stats_wrap = ttk.Frame(right)
+        stats_wrap.grid(row=1, column=0, sticky="ew", pady=(6, 6))
+        stats_wrap.columnconfigure(0, weight=1)
+        tk.Label(stats_wrap, text="EBAY UK SOLD LISTINGS  ·  via Comp Finder",
+                 foreground=ui.SOURCES["ebay"][1], background=ui.C["bg"],
+                 font=("TkDefaultFont", 8, "bold")).grid(row=0, column=0, sticky="w",
+                                                         pady=(0, 3))
+        stats = ttk.Frame(stats_wrap)
+        stats.grid(row=1, column=0, sticky="ew")
         self.figs = {}
         for i, (key, label, tiptext) in enumerate((
                 ("suggested", "Suggested", "The house price for this condition: the basis "
@@ -286,7 +296,8 @@ class PricesTab(ttk.Frame):
                 ("n", "Sales counted", "Sales of this printing that counted, out of all "
                                        "found. Fewer than 4 is thin evidence."),
                 ("last", "Last sold", "Date of the most recent counted sale."))):
-            card = ui.stat_card(stats, label, "—", "", width=110, compact=True)
+            card = ui.stat_card(stats, label, "—", "", width=100, compact=True, source="ebay",
+                                tag=False)
             card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0))
             stats.columnconfigure(i, weight=1, uniform="fig")
             ui.tip(card, tiptext)
@@ -299,23 +310,41 @@ class PricesTab(ttk.Frame):
         ctx = ttk.Frame(right)
         ctx.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         self.ctx = {}
-        for i, (key, label, tiptext, click) in enumerate((
-                ("yours", "Your price", lambda: self._yours_tip(), self.use_price),
+        # Left out belongs with the eBay figures.
+        left = ui.stat_card(stats, "Left out", "—", "", width=100, compact=True,
+                            source="ebay", tag=False)
+        left.grid(row=0, column=len(self.figs), sticky="nsew", padx=(6, 0))
+        stats.columnconfigure(len(self.figs), weight=1, uniform="fig")
+        ui.tip(left, lambda: self._leftout_tip())
+        for w in [left] + list(ui.walk(left)):
+            try:
+                w.configure(cursor="hand2")
+            except tk.TclError:
+                pass
+            w.bind("<Button-1>", lambda _e: self._show_left_out())
+        for i, (key, label, tiptext, click, source) in enumerate((
+                ("yours", "Your price", lambda: self._yours_tip(), self.use_price, "yours"),
                 ("trend", "Trend", "This card's suggested price at its first and latest saved "
-                                   "search, and the change.", None),
-                ("cardmarket", "Cardmarket", lambda: self._cm_tip(), self.open_cardmarket),
-                ("tcgplayer", "TCGplayer (US)", "TCGplayer's market price in dollars, from the "
-                                                "catalogue — a cross-check, not eBay UK.", None),
-                ("leftout", "Left out", lambda: self._leftout_tip(), self._show_left_out))):
-            card = ui.stat_card(ctx, label, "—", "", width=110, compact=True)
+                                   "search, and the change — from your own search history.",
+                 None, "yours"),
+                ("cardmarket", "Price trend", lambda: self._cm_tip(), self.open_cardmarket,
+                 "cardmarket"),
+                ("tcgplayer", "Market (USD)", "TCGplayer's market price in dollars, from the "
+                                              "catalogue — a cross-check, not eBay UK.", None,
+                 "tcgplayer"))):
+            card = ui.stat_card(ctx, label, "—", "", width=110, compact=True, source=source)
             card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 6, 0))
             ctx.columnconfigure(i, weight=1, uniform="ctx")
             ui.tip(card, tiptext)
             if click:
-                for w in [card] + list(card.winfo_children()):
-                    w.configure(cursor="hand2")
+                for w in [card] + list(ui.walk(card)):
+                    try:
+                        w.configure(cursor="hand2")
+                    except tk.TclError:
+                        pass
                     w.bind("<Button-1>", lambda _e, f=click: f())
             self.ctx[key] = card
+        self.ctx["leftout"] = left
 
         self.chart = tk.Canvas(right, height=170, background=ui.C["surface"],
                                highlightthickness=1, highlightbackground=ui.C["border"])

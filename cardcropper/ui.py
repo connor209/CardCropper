@@ -189,6 +189,7 @@ def apply_theme(root):
                     font=("TkDefaultFont", 10, "bold"))
     style.configure("Card.TFrame", background=C["surface"], relief="solid",
                     bordercolor=C["border"], borderwidth=1)
+    style.configure("CardPlain.TFrame", background=C["surface"])
     style.configure("Card.TLabel", background=C["surface"])
     style.configure("CardMuted.TLabel", background=C["surface"], foreground=C["muted"],
                     font="CCSmall")
@@ -488,13 +489,37 @@ def info_dialog(parent, title, text, width=560):
     return top
 
 
-def stat_card(parent, label, value="—", sub="", width=150, compact=False):
+#: Where a figure comes from, and its colour — every box says its source.
+SOURCES = {
+    "ebay": ("eBay UK", "#3451c7"),
+    "yours": ("Yours", "#1a7f37"),
+    "cardmarket": ("Cardmarket", "#0e7490"),
+    "tcgplayer": ("TCGplayer", "#7c3aed"),
+}
+
+
+def stat_card(parent, label, value="—", sub="", width=150, compact=False, source=None,
+              tag=True):
     """
     A boxed figure: small label, big number, smaller note. Returns the frame;
-    its `.set(value, sub=None, colour=None)` updates it.
+    its `.set(value, sub=None, colour=None)` updates it. With `source` (a key
+    of SOURCES) the box gets that source's colour strip and a tag naming it,
+    so figures from eBay, Cardmarket and your own records never read alike.
     """
-    f = ttk.Frame(parent, style="Card.TFrame", padding=(12, 8))
-    ttk.Label(f, text=label, style="CardMuted.TLabel").pack(anchor="w")
+    outer = None
+    if source in SOURCES:
+        name, colour = SOURCES[source]
+        outer = ttk.Frame(parent, style="Card.TFrame")
+        tk.Frame(outer, background=colour, height=4).pack(fill="x", side="top")
+        f = ttk.Frame(outer, style="CardPlain.TFrame", padding=(12, 6, 12, 8))
+        f.pack(fill="both", expand=True)
+        if tag:
+            tk.Label(f, text=name.upper(), foreground=colour, background=C["surface"],
+                     font=("TkDefaultFont", 7, "bold"), borderwidth=0).pack(anchor="w")
+        ttk.Label(f, text=label, style="CardMuted.TLabel").pack(anchor="w")
+    else:
+        f = ttk.Frame(parent, style="Card.TFrame", padding=(12, 8))
+        ttk.Label(f, text=label, style="CardMuted.TLabel").pack(anchor="w")
     v = ttk.Label(f, text=value, style="CardValue.TLabel" if compact else "CardBig.TLabel")
     v.pack(anchor="w")
     s = ttk.Label(f, text=sub, style="CardMuted.TLabel", wraplength=width)
@@ -504,8 +529,9 @@ def stat_card(parent, label, value="—", sub="", width=150, compact=False):
         v.configure(text=value, foreground=colour or C["text"])
         if sub is not None:
             s.configure(text=sub)
-    f.set = set_
-    return f
+    box = outer or f
+    box.set = set_
+    return box
 
 
 def log_pane(parent, height=8):
