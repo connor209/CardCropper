@@ -900,6 +900,23 @@ key in `POKEMONTCG_API_KEY` raises its rate limit.) For each candidate:
   scans;
 - **Price this on eBay** sends the card to the Market page.
 
+**Japanese cards** come from TCGdex (pokemontcg.io lists English sets only).
+A title that says *Japanese*, or carries a Japanese set code (sv4a, s12a,
+SM10a…), is looked up there automatically — or pick **Pokémon (Japanese)**.
+TCGdex's names are Japanese and titles are English, so the card is found by:
+the set code and number when the title has them ("Raichu sv4a 056"); else the
+English name's Pokédex number and the card number, with the set size
+("056/190") and the name's suffix (ex, GX…) choosing between candidates; else,
+for the cards TCGdex gives no Pokédex number (SV4a-349 Charizard ex has none),
+the species' Japanese name and the card number. Results show both names —
+"Charizard ex (リザードンex)" — and **Price this on eBay** searches the way
+sellers write it ("Charizard ex 349/190 SV4a Japanese"). A set TCGdex lists
+without its cards (Eevee Heroes, at the time of writing) cannot be found.
+
+Every TCGdex card carries its exact Cardmarket product id, so Japanese cards
+are priced from Cardmarket's guide by id — no set matching — with TCGdex's
+own copy of Cardmarket's prices (a day old) where today's file lacks it.
+
 **More → Check a whole batch…** (or **Check against catalogue…** on Condition
 a CSV) does this for every card of a prepared batch: each title is searched,
 each front scan compared with what comes back, and the cards whose scan does

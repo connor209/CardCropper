@@ -36,7 +36,8 @@ from .variant_tab import fetch_image
 
 IMG_W, IMG_H = 190, 265
 DETAIL_W = 470
-GAMES = {"Auto": "auto", "Pokémon": "pokemon", "Yu-Gi-Oh": "yugioh"}
+GAMES = {"Auto": "auto", "Pokémon": "pokemon", "Pokémon (Japanese)": "pokemon-jp",
+         "Yu-Gi-Oh": "yugioh"}
 #: The words a claimed printing adds to an eBay search.
 PRINT_WORDS = {"reverse": "Reverse Holo", "1st-edition": "1st Edition",
                "cosmos": "Cosmos Holo", "shadowless": "Shadowless"}
@@ -126,7 +127,7 @@ class LookupTab(ttk.Frame):
                            "the text (Reverse Holo, 1st Edition…) is checked against the "
                            "catalogue. Press Return to search.")
         self.game_var = tk.StringVar(value="Auto")
-        game = ttk.Combobox(bar, textvariable=self.game_var, values=tuple(GAMES), width=9,
+        game = ttk.Combobox(bar, textvariable=self.game_var, values=tuple(GAMES), width=17,
                             state="readonly")
         game.grid(row=0, column=2, padx=6)
         ui.tip(game, "Which catalogue to ask. Auto picks Yu-Gi-Oh for a set code like "

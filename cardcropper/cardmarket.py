@@ -329,6 +329,8 @@ def price_for(card, get=None):
     if card.game not in GAMES:
         return None
     idx = _index(card.game)
+    if getattr(card, "ids", None):
+        return _exact(card, idx)
     if idx is None:
         return None
     found = expansion_for(card, idx, get)
@@ -367,6 +369,45 @@ def price_for(card, get=None):
             "created": idx.created, "sure": found["sure"], "score": found["score"],
             "approx": approx, "prices": prices, "variant": variant,
             "url": SEARCH[card.game] + urllib.parse.quote(card.name)}
+
+
+def _exact(card, idx):
+    """
+    A card whose catalogue knows its Cardmarket ids (TCGdex does, for every
+    print — Japanese ones included): today's guide by id, no matching at all.
+    Where today's guide is not on disk or lacks the id, TCGdex's own copy
+    of Cardmarket's prices (a day or so old) stands in.
+    """
+    kinds = sorted(card.ids, key=lambda k: (k != "normal", k != "holo", k))
+    var_key, var_name = VARIANT[card.game]
+    first = kinds[0]
+    g = (idx.guide.get(card.ids[first]) if idx else None) or {}
+    if g:
+        prices = [(label, g.get(k)) for k, label in FIELDS if g.get(k)]
+        variant = [(f"{var_name.capitalize()} {label.lower()}", g.get(f"{k}-{var_key}"))
+                   for k, label in FIELDS if g.get(f"{k}-{var_key}")]
+        for k in kinds[1:]:
+            other = idx.guide.get(card.ids[k]) or {}
+            if other.get("trend"):
+                variant.append((f"{k} print trend", other["trend"]))
+        created = idx.created
+        product = idx.product_name.get(card.ids[first], card.name)
+    else:
+        via = next((v for key, v in (card.prices or {}).items()
+                    if key.startswith("Cardmarket via TCGdex")), None)
+        if not via:
+            return None
+        date = next((key for key in card.prices if key.startswith("Cardmarket via TCGdex")),
+                    "")
+        created = (re.search(r"\d{4}-\d{2}-\d{2}", date) or [""])[0] + " via TCGdex"
+        vals = list(via.items()) if isinstance(via, dict) else [(first, via)]
+        prices = [("Trend", vals[0][1])]
+        variant = [(f"{k.lower()} print trend", v) for k, v in vals[1:]]
+        product = card.name
+    return {"product": product, "id": card.ids[first], "created": created, "sure": True,
+            "score": 1.0, "approx": False, "prices": prices, "variant": variant,
+            "exact": True, "url": SEARCH[card.game] + urllib.parse.quote(
+                re.sub(r"\s*\(.*?\)", "", card.name))}
 
 
 def describe(found):

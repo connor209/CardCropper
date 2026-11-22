@@ -117,6 +117,20 @@ def main():
         check(cm.price_for(bewd, get=fake_get)["prices"][0] == ("Trend", 900.0),
               "a single print should be priced exactly")
 
+        # A card that knows its Cardmarket id (TCGdex): priced by id, no matching.
+        exact = CatalogCard("pokemon", "SV4a-056", "Raichu (ライチュウ)", "056", "x", "SV4a",
+                            190, "", "", "", "", [], {}, "", ids={"normal": 1002},
+                            language="ja")
+        got = cm.price_for(exact, get=lambda *a: (_ for _ in ()).throw(
+            AssertionError("an exact id must not need the set lists")))
+        check(got["exact"] and got["prices"][0] == ("Trend", 1.0), f"exact id: {got}")
+        stale = CatalogCard("pokemon", "Z-1", "Gone", "1", "x", "Z", 1, "", "", "", "", [],
+                            {"Cardmarket via TCGdex 2026-11-21 (EUR)": {"Holo": 3.5}}, "",
+                            ids={"holo": 999999})
+        got = cm.price_for(stale)
+        check(got and got["prices"][0] == ("Trend", 3.5) and "TCGdex" in got["created"],
+              f"an id missing from today's guide should fall back to TCGdex's copy: {got}")
+
         def broken(url):
             return b"<html>maintenance</html>"
         before = os.path.getmtime(cm._paths("pokemon")[0])

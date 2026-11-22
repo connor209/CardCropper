@@ -243,6 +243,75 @@ def batch_checks(work):
     check(got[2]["verdict"] == "no scan", got[2])
 
 
+def japanese_checks():
+    """Japanese cards through TCGdex: by set code, by Pokédex number, and without one."""
+    def jp_card(cid, name, dex, cm_id, kind="normal", total=190, trend=0.1):
+        sid, local = cid.rsplit("-", 1)
+        d = {"id": cid, "localId": local, "name": name,
+             "image": f"https://assets.tcgdex.net/ja/SV/{sid}/{local}",
+             "set": {"id": sid, "name": "シャイニートレジャーex",
+                     "cardCount": {"official": total, "total": 320}},
+             "variants": {kind: True},
+             "variants_detailed": [{"type": kind, "thirdParty": {"cardmarket": cm_id},
+                                    "pricing": {"cardmarket": {"updated": "2026-11-21T22:00Z",
+                                                               "trend": trend}}}]}
+        if dex:
+            d["dexId"] = dex
+        return d
+    cards = {"SV4a-056": jp_card("SV4a-056", "ライチュウ", [26], 746438),
+             "SM10a-056": jp_card("SM10a-056", "ライチュウ&アローラライチュウGX", [26, 26],
+                                  557335, "holo", total=54),
+             "SV4a-349": jp_card("SV4a-349", "リザードンex", None, 747703, "holo",
+                                 trend=247.11)}
+
+    def get(url, headers):
+        u = urllib.parse.unquote(url)
+        if "/en/cards?" in u:
+            n = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["name"][0][3:]
+            return [{"id": {"Raichu": "base1-14", "Charizard": "base1-4",
+                            "Charizard ex": "sv3pt5-6"}[n]}] if n in (
+                "Raichu", "Charizard", "Charizard ex") else []
+        if "/en/cards/" in u:
+            return {"id": u.rsplit("/", 1)[1],
+                    "dexId": [26] if "base1-14" in u else [6]}
+        if "/ja/sets" in u:
+            return [{"id": "SV4a", "cardCount": {"official": 190}},
+                    {"id": "SM10a", "cardCount": {"official": 54}}]
+        if "/ja/cards?" in u:
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            rows = [{"id": k, "localId": v["localId"], "name": v["name"]}
+                    for k, v in cards.items()]
+            if "dexId" in q:
+                dex = int(q["dexId"][0][3:])
+                rows = [r for r in rows if dex in (cards[r["id"]].get("dexId") or [])]
+                if dex == 6:     # species name comes from a card that has the number
+                    rows.append({"id": "X-1", "localId": "1", "name": "リザードン"})
+            if "localId" in q:
+                rows = [r for r in rows if r["localId"] == q["localId"][0]]
+            return rows
+        if "/ja/cards/" in u:
+            cid = u.rsplit("/", 1)[1]
+            return next((v for k, v in cards.items() if k.lower() == cid.lower()),
+                        {"error": "not found"})
+        raise AssertionError(f"unexpected url {url}")
+
+    check(catalog.looks_japanese("Raichu sv4a 056") and
+          catalog.looks_japanese("Raichu 056/190 Shiny Treasure ex Japanese") and
+          not catalog.looks_japanese("Lugia 78/124 Fates Collide"), "Japanese detection")
+    r = catalog.search("Raichu sv4a 056", get=get)
+    check(r and r[0].id == "SV4a-056" and r[0].ids == {"normal": 746438}
+          and r[0].language == "ja", f"set code + number: {r}")
+    r = catalog.search("Raichu 056/190 Shiny Treasure ex Japanese Pokemon NM", get=get)
+    check([c.id for c in r] == ["SV4a-056", "SM10a-056"],
+          f"the plain card should beat the tag team, by set size: {[c.id for c in r]}")
+    check(r[0].name == "Raichu (ライチュウ)", r[0].name)
+    r = catalog.search("Charizard ex 349/190 Shiny Treasure ex Japanese", get=get)
+    check(r and r[0].id == "SV4a-349",
+          f"a card with no Pokédex number should be found by name and number: {r}")
+    check(r[0].prices["Cardmarket via TCGdex 2026-11-21 (EUR)"] == {"Holo": 247.11},
+          r[0].prices)
+
+
 def ebay_checks():
     url = catalog.ebay_sold_url("Pikachu 58/102 Base Set & co")
     check(url.startswith("https://www.ebay.co.uk/sch/i.html?"), url)
@@ -269,6 +338,7 @@ def main():
         variant_checks(pikachu, magician)
         image_checks()
         ebay_checks()
+        japanese_checks()
         batch_checks(tempfile.mkdtemp(prefix="cc-batch-"))
         check(catalog.clear_cache() > 0 and not os.listdir(work), "cache cleared")
     finally:

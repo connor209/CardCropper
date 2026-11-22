@@ -84,6 +84,10 @@ class CatalogCard:
     printings: list[str] = field(default_factory=list)
     prices: dict = field(default_factory=dict)
     url: str = ""
+    #: The card's own ids elsewhere, by printing — {"normal": 746438, "holo": …}
+    #: for Cardmarket — where the catalogue knows them (TCGdex does).
+    ids: dict = field(default_factory=dict)
+    language: str = "en"
 
 
 class Results(list):
@@ -461,6 +465,220 @@ def search_yugioh(parts, limit=30, get=None):
 # ---------------------------------------------------------------- search
 
 
+# ---------------------------------------------------------------- japanese (TCGdex)
+#
+# pokemontcg.io lists English sets only. TCGdex lists Japanese ones too, and
+# better: each print carries its Cardmarket product id, so a Japanese card
+# is priced from Cardmarket's guide exactly, with no name matching at all.
+# Its names are Japanese, though, and titles are typed in English — so an
+# English name is turned into its Pokédex number (from TCGdex's English
+# cards), and the Japanese cards are found by that number and the card
+# number; the set size and the name's suffix (ex, GX, V…) settle the rest.
+
+TCGDEX = "https://api.tcgdex.net/v2"
+_JP_WORD = re.compile(r"\b(japanese|japan|jpn|jp)\b", re.I)
+#: A Japanese set code in a title: SV4a, S12a, SM10a, sv2a, S8b, SVLN, SVG…
+_JP_CODE = re.compile(r"\b((?:SV|S|SM|XY|BW)\d{1,2}[a-zA-Z]{0,2}|SVLN|SVLS|SVG|SVK)\b", re.I)
+_SUFFIXES = ("VMAX", "VSTAR", "V-UNION", "BREAK", "GX", "EX", "ex", "V", "LV.X", "Prime")
+
+
+def looks_japanese(text):
+    """A title that names Japanese, or a Japanese-style set code (sv4a, s12a…)."""
+    if _JP_WORD.search(text or ""):
+        return True
+    m = _JP_CODE.search(text or "")
+    return bool(m and re.search(r"\d[a-zA-Z]$", m.group(1)))
+
+
+def _jp_parts(text):
+    """(english name, set code or '', card number or '') from a title."""
+    t = _JP_WORD.sub(" ", text or "")
+    t = re.sub(r"\b(pok[eé]mon|card|tcg|NM|LP|MP|HP|DMG|holo|rare|promo)\b", " ", t,
+               flags=re.I)
+    m = _JP_CODE.search(t)
+    code = m.group(1) if m else ""
+    if m:
+        t = t[:m.start()] + " " + t[m.end():]
+    n = re.search(r"\b0*(\d{1,3})\s*/\s*\d{1,3}\b", t) or re.search(r"\b0*(\d{1,3})\b", t)
+    number = n.group(1) if n else ""
+    if n:
+        t = t[:n.start()] + " " + t[n.end():]
+    name = re.sub(r"\s+", " ", t).strip(" -,")
+    total = re.search(r"\d{1,3}\s*/\s*0*(\d{1,3})", text or "")
+    return name, code, number, int(total.group(1)) if total else None
+
+
+def _base_name(name):
+    words = name.split()
+    while len(words) > 1 and words[-1].upper() in {s.upper() for s in _SUFFIXES}:
+        words.pop()
+    return " ".join(words)
+
+
+def english_dex(name, get=None):
+    """The Pokédex number of an English card name, via TCGdex's English cards — or None."""
+    for n in dict.fromkeys([name, _base_name(name)]):
+        if not n:
+            continue
+        rows = fetch_json(f"{TCGDEX}/en/cards?" + urllib.parse.urlencode(
+            {"name": f"eq:{n}", "pagination:itemsPerPage": 5}), get=get,
+            max_age=90 * 86400)
+        for r in rows if isinstance(rows, list) else []:
+            d = fetch_json(f"{TCGDEX}/en/cards/{urllib.parse.quote(r['id'])}", get=get,
+                           max_age=90 * 86400)
+            if isinstance(d, dict) and d.get("dexId"):
+                return d["dexId"][0]
+    return None
+
+
+def normalise_tcgdex(d, english_name=""):
+    """One TCGdex card (any language) → a CatalogCard, with its Cardmarket ids."""
+    s = d.get("set") or {}
+    v = d.get("variants") or {}
+    printings = [label for key, label in (("normal", "Normal"), ("holo", "Holo"),
+                                          ("reverse", "Reverse Holo"),
+                                          ("firstEdition", "1st Edition")) if v.get(key)]
+    ids, prices, updated = {}, {}, ""
+    for vd in d.get("variants_detailed") or []:
+        kind = vd.get("type") or "normal"
+        cm_id = (vd.get("thirdParty") or {}).get("cardmarket")
+        if cm_id:
+            ids.setdefault(kind, cm_id)
+        cm = (vd.get("pricing") or {}).get("cardmarket") or {}
+        if cm.get("trend"):
+            prices.setdefault("Cardmarket via TCGdex (EUR)", {})[kind.capitalize()] = cm["trend"]
+            updated = updated or (cm.get("updated") or "")[:10]
+    if updated:
+        prices = {k.replace("(EUR)", f"{updated} (EUR)"): v for k, v in prices.items()}
+    image = d.get("image") or ""
+    name = d.get("name", "")
+    lang = "ja" if "/ja/" in image else "en"
+    return CatalogCard(
+        game="pokemon", id=d.get("id", ""),
+        name=f"{english_name} ({name})" if english_name and english_name != name else name,
+        number=d.get("localId", ""),
+        set_name=f"{s.get('name', '')} ({s.get('id', '')})".strip(),
+        set_id=s.get("id", ""), set_total=(s.get("cardCount") or {}).get("official"),
+        rarity=d.get("rarity") or "", image_small=image + "/low.png" if image else "",
+        image_large=image + "/high.png" if image else "", printings=printings,
+        prices=prices, ids=ids, language=lang)
+
+
+def _jp_species(dex, get=None):
+    """The Japanese name of a Pokédex number, read off any Japanese card that has it."""
+    rows = fetch_json(f"{TCGDEX}/ja/cards?" + urllib.parse.urlencode({"dexId": f"eq:{dex}"}),
+                      get=get, max_age=90 * 86400)
+    import collections
+    names = [r.get("name", "") for r in rows if isinstance(rows, list)] if rows else []
+    # Tag teams carry every partner's number ("Reshiram & Charizard GX" has 6),
+    # so take the name that turns up most often across all of them.
+    parts = collections.Counter()
+    for n in names:
+        for part in re.split(r"[&＆]", n):
+            part = re.sub(r"(ex|EX|GX|V|VMAX|VSTAR|BREAK|LV\.X)$", "", part.strip()).strip()
+            if part:
+                parts[part] += 1
+    return parts.most_common(1)[0][0] if parts else ""
+
+
+def _jp_set_sizes(get=None):
+    rows = fetch_json(f"{TCGDEX}/ja/sets", get=get, max_age=30 * 86400)
+    return {r.get("id", "").lower(): (r.get("cardCount") or {}).get("official")
+            for r in rows if isinstance(rows, list)} if rows else {}
+
+
+def _by_number_and_name(dex, number, total, code, get=None, limit=8):
+    """
+    Some Japanese cards carry no Pokédex number (SV4a-349 Charizard ex has
+    none), so the number route misses them. Find them instead by card
+    number, set size and the species' Japanese name.
+    """
+    species = _jp_species(dex, get)
+    if not species:
+        return []
+    rows = fetch_json(f"{TCGDEX}/ja/cards?" + urllib.parse.urlencode(
+        {"localId": number.zfill(3)}), get=get)
+    rows = [r for r in rows if isinstance(rows, list) and species in r.get("name", "")] \
+        if rows else []
+    if total or code:
+        sizes = _jp_set_sizes(get)
+        keep = []
+        for r in rows:
+            sid = r.get("id", "").rsplit("-", 1)[0].lower()
+            if (code and sid == code.lower()) or (total and sizes.get(sid) == total):
+                keep.append(r)
+        rows = keep or rows
+    out = []
+    for r in rows[:limit]:
+        d = fetch_json(f"{TCGDEX}/ja/cards/{urllib.parse.quote(r['id'])}", get=get)
+        if isinstance(d, dict) and d.get("id"):
+            out.append(d)
+    return out
+
+
+def search_japanese(text, limit=12, get=None):
+    """Japanese Pokémon cards for an English title, best first."""
+    name, code, number, total = _jp_parts(text)
+    parts = {"name": name, "number": number, "total": total, "set_name": code,
+             "printing": pricing.printing_of(text), "rarity": "", "code": code,
+             "game": "pokemon"}
+    details = []
+    if code and number:
+        for n in dict.fromkeys([number.zfill(3), number]):
+            try:
+                d = fetch_json(f"{TCGDEX}/ja/cards/{urllib.parse.quote(code)}-{n}", get=get)
+            except Exception:                                # noqa: BLE001
+                d = None
+            if isinstance(d, dict) and d.get("id"):
+                details.append(d)
+                break
+    if not details and name:
+        # The English set name often trails the card's ("Raichu Shiny Treasure
+        # ex"): try the longest run of leading words that names a Pokémon.
+        words, dex = name.split(), None
+        for n in range(min(len(words), 4), 0, -1):
+            dex = english_dex(" ".join(words[:n]), get)
+            if dex:
+                name = " ".join(words[:n])
+                break
+        if dex:
+            q = {"dexId": f"eq:{dex}"}
+            if number:
+                q["localId"] = number.zfill(3)
+            rows = fetch_json(f"{TCGDEX}/ja/cards?" + urllib.parse.urlencode(q), get=get)
+            rows = rows if isinstance(rows, list) else []
+            if code:
+                rows.sort(key=lambda r: not r.get("id", "").lower().startswith(code.lower()))
+            for r in rows[:limit]:
+                d = fetch_json(f"{TCGDEX}/ja/cards/{urllib.parse.quote(r['id'])}", get=get)
+                if isinstance(d, dict) and d.get("id"):
+                    details.append(d)
+            if not details and number:
+                details = _by_number_and_name(dex, number, total, code, get)
+
+    suffix = next((x for x in _SUFFIXES if re.search(rf"\b{re.escape(x)}\b", name)), "")
+
+    def score(d):
+        s = d.get("set") or {}
+        sc = 0
+        if total and (s.get("cardCount") or {}).get("official") == total:
+            sc += 3
+        if code and (s.get("id") or "").lower() == code.lower():
+            sc += 3
+        if len(d.get("dexId") or []) == 1:
+            sc += 1
+        jp = d.get("name", "")
+        if suffix and suffix.lower() in jp.lower():
+            sc += 1
+        if not suffix and re.search(r"(ex|GX|V|VMAX|VSTAR)$", jp):
+            sc -= 1
+        return sc
+    details.sort(key=score, reverse=True)
+    english = _base_name(name) if name else ""
+    cards = [normalise_tcgdex(d, english + (f" {suffix}" if suffix else "")) for d in details]
+    return Results(cards, f"TCGdex (Japanese): {name} {code} {number}".strip(), parts)
+
+
 def search(text, game="auto", limit=30, get=None):
     """
     Look a card up from a title or a few words. `game` is 'auto', 'pokemon'
@@ -469,6 +687,9 @@ def search(text, game="auto", limit=30, get=None):
     """
     parts = parse_title(text)
     g = parts["game"] if game in (None, "", "auto") else game
+    if g == "pokemon-jp" or (game in (None, "", "auto") and g == "pokemon"
+                             and looks_japanese(text)):
+        return search_japanese(text, get=get)
     parts["game"] = g
     if g == "yugioh":
         return search_yugioh(parts, limit, get)
@@ -563,6 +784,9 @@ def ref_price(card):
                      ("Cardmarket, any print (EUR)", "€")):
         if isinstance(p.get(key), (int, float)):
             return f"{sym}{p[key]:.2f}"
+    via = next((v for k, v in p.items() if k.startswith("Cardmarket via TCGdex")), None)
+    if isinstance(via, dict) and via:
+        return f"€{min(via.values()):.2f}"
     return ""
 
 
@@ -577,6 +801,12 @@ def title_for(card, printing=""):
         if printing:
             parts.append(printing)
         return " ".join(p for p in parts if p)
+    if card.language == "ja":
+        # The English name, the number as printed, the set code, and the word
+        # sellers use — the Japanese set name would find nothing on eBay UK.
+        name = re.sub(r"\s*\(.*?\)\s*$", "", card.name)
+        num = f"{card.number}/{card.set_total:03d}" if card.set_total else card.number
+        return " ".join(p for p in (name, num, card.set_id, printing, "Japanese") if p)
     num = card.number
     if card.set_total and num.isdigit():
         if card.release_date[:4] >= "2020":
