@@ -105,6 +105,17 @@ def library_checks(work):
 
     blind_checks()
 
+    # Front score: recorded, and judged against hand grades before any use.
+    check("No graded card has a front score" in "\n".join(
+        library.front_calibration(line="nowhere")), "empty front calibration")
+    for i in range(12):
+        g = ("NM", "LP", "MP")[i % 3]
+        library.record(f"FS{i}", g, "review-sheet", origin="f", line="front-test",
+                       front_worst_corner_pct={"NM": 0.05, "LP": 1.0, "MP": 5.0}[g],
+                       front_wear_total_pct={"NM": 0.01, "LP": 0.2, "MP": 1.0}[g])
+    check("separates the grades" in library.front_calibration(line="front-test")[-1],
+          "a clean front-score split was not recognised")
+
     library.record_later("KC1", "HP", "grade-tab", line="yugioh")
     library.flush()
     check(any(c["sku"] == "KC1" for c in library.cards(line="yugioh")),

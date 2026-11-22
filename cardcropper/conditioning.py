@@ -37,7 +37,8 @@ from . import grading, imaging, scoring
 TRIAGE_FIELDS = ["sku", "title", "set", "number", "triage", "worst_corner_pct",
                  "wear_total_pct", "corner_tl", "corner_tr", "corner_bl", "corner_br",
                  "edge_top", "edge_bottom", "edge_left", "edge_right", "border_base",
-                 "deskew_deg", "duplicate_of", "copies", "check_back_era", "note"]
+                 "deskew_deg", "duplicate_of", "copies", "check_back_era", "note",
+                 "front_worst_corner_pct", "front_wear_total_pct", "front_border_base"]
 
 #: The seven columns are the review sheet proper. `triage` and `look_at` trail
 #: behind as working aids — which band a card fell in, and which file to open
@@ -401,6 +402,17 @@ def _process(sheet, row, out_dir, thresholds, refresh, crops, fetcher, uploader)
 
     exact, padded, angle = faces["back"]
     rec.update(scoring.score_back(exact))
+    # The same measurement on the front, recorded but NOT used for triage:
+    # a front's border is artwork on many cards, so the number only means
+    # something once the grade library shows it separating grades (see
+    # library.front_calibration). Until then it is evidence being gathered.
+    try:
+        front = scoring.score_back(faces["front"][0])
+        rec.update({"front_worst_corner_pct": front["worst_corner_pct"],
+                    "front_wear_total_pct": front["wear_total_pct"],
+                    "front_border_base": front["border_base"]})
+    except Exception:                                   # noqa: BLE001
+        pass
     rec["deskew_deg"] = round(angle, 2)
     rec["triage"] = scoring.triage(rec, thresholds)
 

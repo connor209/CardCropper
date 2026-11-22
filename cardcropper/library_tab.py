@@ -93,6 +93,7 @@ class LibraryTab(ttk.Frame):
             ("Score a blind check…", self.score_blind),
             None,
             ("How graders are doing…", self.show_graders),
+            ("Does the front score work yet?…", self.show_front),
         ], text="Blind checks", tip_text="Before a batch: grade 10 golden cards blind on the "
                                          "Grade tab, then score them against the grades they "
                                          "have in hand. Any overgrade stops the batch.")
@@ -473,6 +474,11 @@ class LibraryTab(ttk.Frame):
                       "error log."]
         ui.info_dialog(self, "Blind check result", "\n".join(lines))
         self.refresh()
+
+    def show_front(self):
+        line = self.line_var.get()
+        ui.info_dialog(self, "Front-border score", "\n".join(
+            library.front_calibration(None if line == ALL else line)))
 
     def show_graders(self):
         st = library.grader_stats()

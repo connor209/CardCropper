@@ -303,7 +303,9 @@ class ReviewPanel(ttk.Frame):
                 looked="yes", notes=note, confidence=self.conf_var.get(),
                 worst_corner_pct=_float(self.rec.get("worst_corner_pct")),
                 wear_total_pct=_float(self.rec.get("wear_total_pct")),
-                border_base=_float(self.rec.get("border_base")))
+                border_base=_float(self.rec.get("border_base")),
+                front_worst_corner_pct=_float(self.rec.get("front_worst_corner_pct")),
+                front_wear_total_pct=_float(self.rec.get("front_wear_total_pct")))
         self.status.configure(foreground=ui.C["ok"], text=f"Saved {sku}: {g}")
         if self.on_saved:
             self.on_saved(sku, g)

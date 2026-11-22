@@ -61,7 +61,7 @@ _GRADE_COLS = ["sku", "card", "game", "line", "batch", "grade", "keyed", "reason
                "pass_no", "grader", "source", "origin", "looked", "front_points",
                "back_points", "front_corners", "back_corners", "crease", "notes",
                "confidence", "worst_corner_pct", "wear_total_pct", "border_base",
-               "graded_at"]
+               "front_worst_corner_pct", "front_wear_total_pct", "graded_at"]
 
 
 def settings_dir():
@@ -113,6 +113,10 @@ def connect(path=None):
         golden INTEGER NOT NULL DEFAULT 0, true_grade TEXT, borderline INTEGER,
         golden_notes TEXT, promoted_at TEXT, updated_at TEXT)""")
     db.execute("CREATE INDEX IF NOT EXISTS grades_sku ON grades(sku)")
+    have = {r[1] for r in db.execute("PRAGMA table_info(grades)")}
+    for col in ("front_worst_corner_pct", "front_wear_total_pct"):
+        if col not in have:              # added after the first release of the library
+            db.execute(f"ALTER TABLE grades ADD COLUMN {col} REAL")
     db.commit()
     return db
 
@@ -613,7 +617,10 @@ def import_review(review_path, triage_path=None, out_dir=None, path=None):
                   confidence=r.get("confidence") or "",
                   worst_corner_pct=_float(s.get("worst_corner_pct")),
                   wear_total_pct=_float(s.get("wear_total_pct")),
-                  border_base=_float(s.get("border_base")), graded_at=stamp):
+                  border_base=_float(s.get("border_base")),
+                  front_worst_corner_pct=_float(s.get("front_worst_corner_pct")),
+                  front_wear_total_pct=_float(s.get("front_wear_total_pct")),
+                  graded_at=stamp):
             n += 1
     return n
 
@@ -800,3 +807,35 @@ def grader_stats(path=None):
                 e["passes"] += 1
                 e["agreed"] += 1 if g["grade"] == standing else 0
     return out
+
+
+# ---------------------------------------------------------------- front score
+
+
+def front_calibration(line=None, path=None):
+    """
+    Whether the front-border score separates grades yet, from the library's
+    hand grades — the same conservative fit `scoring.fit` makes for the back.
+    Returns report lines. The front score is never used to triage until a
+    person has read this and decided it is good enough.
+    """
+    from . import scoring
+    rows = []
+    for c in cards(path, line=line):
+        g = next((x for x in reversed(c["grades"]) if x["source"] != "golden-blind"
+                  and x.get("front_worst_corner_pct") is not None), None)
+        if g is None:
+            continue
+        rows.append({"sku": c["sku"], "grade": c.get("true_grade") or c["standing"],
+                     "worst_corner_pct": float(g["front_worst_corner_pct"]),
+                     "wear_total_pct": float(g["front_wear_total_pct"] or 0)})
+    head = [f"Front-border score against {len(rows)} hand-graded card(s)"
+            + (f" in {line}" if line else "") + "."]
+    if not rows:
+        return head + ["No graded card has a front score yet. Cards prepared on Condition a CSV "
+                       "from now on carry one; grade them and record the grades."]
+    proposed, report = scoring.fit(rows)
+    verdict = ("The front score separates the grades on this sample — worth considering "
+               "for triage." if proposed else
+               "Not yet good enough to triage by: keep looking at fronts by eye.")
+    return head + report + ["", verdict]
