@@ -335,6 +335,7 @@ class ConditionTab(ttk.Frame):
                                        self.paths["thresholds"], adopt=False)
         for line in lines:
             self._say(line)
+        self._to_library(review, triage)
         proposal = next((ln for ln in lines if ln.startswith("proposed:")), None)
         if proposal and messagebox.askyesno(
                 APP_NAME, f"{proposal}\n\nTriage future batches with these thresholds? "
@@ -343,6 +344,15 @@ class ConditionTab(ttk.Frame):
                                                self.paths["thresholds"], adopt=True)[-1:]:
                 self._say(line)
             self._show_thresholds()
+
+    def _to_library(self, review, triage=None):
+        """Every grade in the review sheet also goes into the grade library."""
+        from . import library
+        try:
+            n = library.import_review(review, triage, self.out_var.get().strip())
+            self._say(f"{n} grade(s) recorded in the grade library")
+        except Exception as exc:                            # noqa: BLE001
+            self._say(f"could not record grades in the grade library: {exc}")
 
     def apply(self):
         review = self._review_path()
@@ -367,6 +377,7 @@ class ConditionTab(ttk.Frame):
             return
         for line in result.summary():
             self._say(line)
+        self._to_library(review)
         if result.missing_grades:
             messagebox.showinfo(
                 APP_NAME,

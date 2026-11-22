@@ -669,9 +669,33 @@ class GradeTab(ttk.Frame):
                        notes=self.note_var.get())
         if self.golden:
             self._write_blind(sku, final)
+        self._to_library(sku, a, final, reasons)
         msg = f"{sku}: {final}" + (f" — {'; '.join(reasons)}" if reasons else "")
         self.go(self.index + 1)
         self.status.configure(text=msg, foreground="#1a7f37" if not reasons else "#8a5a00")
+
+    def _to_library(self, sku, a, final, reasons):
+        """
+        Every human grade also goes into the grade library, with the card's
+        images, so a golden set can be chosen from it later. In the
+        background: copying four images must not hold up the next card.
+        """
+        if final not in grading.GRADES:
+            return
+        from . import library
+        _, front, back, fc, bc = self.cards[self.index]
+        line = self._line()
+        library.record_later(
+            sku, final, "golden-blind" if self.golden else "grade-tab",
+            images={"front": front, "back": back, "front_crops": fc, "back_crops": bc},
+            take_snapshot=not self.golden, game=self._game(), line=line,
+            batch=self.batch.code if self.batch else "golden", keyed=a.grade,
+            reasons="; ".join(reasons), pass_no=self.pass_var.get(),
+            grader=self.grader_var.get(), origin=os.path.abspath(self.grades_path or ""),
+            looked=a.looked, crease=a.crease, notes=self.note_var.get(),
+            front_points=a.points.get("front"), back_points=a.points.get("back"),
+            front_corners=a.corners_whitened.get("front"),
+            back_corners=a.corners_whitened.get("back"))
 
     def _write_blind(self, sku, final):
         """A golden blind check also keeps id,grade for `--cli golden --score`."""
