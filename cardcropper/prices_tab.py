@@ -43,14 +43,11 @@ def _money(v):
     return "" if v is None else f"£{float(v):.2f}"
 
 
-def _image_url(sale):
-    for k in ("image", "imageUrl", "image_url", "img", "thumbnail", "picture", "galleryURL"):
-        v = sale.get(k)
-        if isinstance(v, dict):
-            v = v.get("imageUrl") or v.get("url")
-        if v:
-            return str(v)
-    return ""
+#: Thumbnails in the Pictures view, and how many listings' pictures are
+#: fetched per card — each one without a picture in the evidence costs a
+#: look at its eBay page.
+THUMB = 112
+MAX_PICTURES = 60
 
 
 class PricesTab(ttk.Frame):
@@ -73,6 +70,13 @@ class PricesTab(ttk.Frame):
         self.urls = {}
         self.photos = []
         self.history_ids = {}
+        #: Listing pictures by sale key: a PIL image, or None for "none to be
+        #: had". Shared by the Pictures view and the listing panel.
+        self.pictures = {}
+        self.thumbs = []
+        from concurrent.futures import ThreadPoolExecutor
+        self._pool = ThreadPoolExecutor(max_workers=4)
+        self._asked = set()
 
         self._build_search()
         self._build_body()
@@ -234,11 +238,33 @@ class PricesTab(ttk.Frame):
                                     command=self.reset_whatif, state="disabled")
         self.reset_btn.pack(side="right")
         ui.tip(self.reset_btn, "Put back every sale you left out by hand.")
-        wrap, self.sales = ui.tree(sales, (
+        self.sales_views = ttk.Notebook(sales)
+        self.sales_views.grid(row=1, column=0, sticky="nsew")
+        wrap, self.sales = ui.tree(self.sales_views, (
             ("state", "Counted?", 70), ("total", "Total", 62, {"anchor": "e"}),
             ("date", "Sold", 88), ("title", "Listing title", 300, {"stretch": True}),
             ("why", "Why left out", 150)), height=8)
-        wrap.grid(row=1, column=0, sticky="nsew")
+        self.sales_views.add(wrap, text="List")
+        gallery = ttk.Frame(self.sales_views)
+        gallery.columnconfigure(0, weight=1)
+        gallery.rowconfigure(0, weight=1)
+        self.gallery = tk.Canvas(gallery, background=ui.C["surface"], highlightthickness=0)
+        self.gallery.grid(row=0, column=0, sticky="nsew")
+        gsb = ttk.Scrollbar(gallery, orient="vertical", command=self.gallery.yview)
+        gsb.grid(row=0, column=1, sticky="ns")
+        self.gallery.configure(yscrollcommand=gsb.set)
+        self.gallery.bind("<Configure>", lambda _e: self._draw_gallery())
+        self.gallery.bind("<MouseWheel>", lambda e: self.gallery.yview_scroll(
+            -1 if e.delta > 0 else 1, "units"))
+        self.gallery.bind("<Button-4>", lambda _e: self.gallery.yview_scroll(-1, "units"))
+        self.gallery.bind("<Button-5>", lambda _e: self.gallery.yview_scroll(1, "units"))
+        self.sales_views.add(gallery, text="Pictures")
+        # Drawn when the tab is actually on screen: the tab-changed event
+        # comes before the canvas is mapped.
+        self.gallery.bind("<Map>", lambda _e: self.after_idle(self._draw_gallery))
+        ui.tip(self.sales_views, "List: every sale with why it counted. Pictures: the same "
+                                 "sales as photos — green border counted, grey left out. "
+                                 "Click a picture to see that listing.")
         self.sales.tag_configure("out", foreground=ui.C["faint"])
         self.sales.tag_configure("kept", foreground=ui.C["ok"])
         self.sales.tag_configure("mine", foreground=ui.C["bad"])
@@ -253,8 +279,10 @@ class PricesTab(ttk.Frame):
         detail.columnconfigure(0, weight=1)
         ttk.Label(detail, text="Listing", style="Heading.TLabel").grid(row=0, column=0,
                                                                        sticky="w")
-        self.pic = tk.Canvas(detail, width=260, height=180, background=ui.C["sunken"],
-                             highlightthickness=0)
+        self.pic = tk.Canvas(detail, width=260, height=220, background=ui.C["sunken"],
+                             highlightthickness=0, cursor="hand2")
+        self.pic.bind("<Button-1>", lambda _e: self.open_listing())
+        ui.tip(self.pic, "The listing's photo. Click to open the listing on eBay.")
         self.pic.grid(row=1, column=0, sticky="ew", pady=(4, 6))
         self.sale_title = ttk.Label(detail, wraplength=270, justify="left")
         self.sale_title.grid(row=2, column=0, sticky="w")
@@ -323,9 +351,7 @@ class PricesTab(ttk.Frame):
                         f"{type(payload).__name__}: {payload}"
                     self.status.configure(text=msg, foreground=ui.C["bad"])
                 elif kind == "pic":
-                    key, img = payload
-                    if key == self._sale_key_selected():
-                        self._show_pic(img)
+                    self._got_pic(*payload)
                 else:
                     self.search_btn.configure(state="normal")
                     priced, expected, evidence, note = payload[:4]
@@ -740,6 +766,7 @@ class PricesTab(ttk.Frame):
             if s.get("url"):
                 self.urls[iid] = s["url"]
         self._clear_sale()
+        self._draw_gallery()
 
     # ------------------------------------------------------------ chart
 
@@ -873,7 +900,7 @@ class PricesTab(ttk.Frame):
         skip = {"title", "price", "postage", "date", "url", "excluded_reason", "why",
                 "put_back"}
         for k, v in s.items():
-            if k not in skip and v not in (None, "", [], {}) and not _image_url({k: v}):
+            if k not in skip and v not in (None, "", [], {}) and not market.image_in({k: v}):
                 info.append(f"{k.replace('_', ' ').capitalize()}: {v}")
         self.sale_info.configure(text="\n".join(info))
         self.open_btn.configure(state="normal" if s.get("url") else "disabled")
@@ -881,38 +908,139 @@ class PricesTab(ttk.Frame):
         self.toggle_btn.configure(state="normal" if state == KEPT or mine else "disabled",
                                   text="Put back" if mine else "Leave out")
         self._draw_chart(selected=str(i))
-        self.pic.delete("all")
-        url = _image_url(s)
-        if url:
-            self.pic.create_text(130, 90, text="loading picture…", fill=ui.C["faint"])
-            key = market.sale_key(s)
+        self._show_pic(None, waiting=True)
+        self._want(s)
+        self._mark_gallery(str(i))
 
-            def load():
-                try:
+    # ------------------------------------------------------------ pictures
+
+    def _want(self, sale):
+        """
+        Get a sale's picture in the background: from the evidence when it
+        carries one, else from the listing's eBay page (remembered in
+        market.sqlite). Arrives as a ("pic", (key, image)) event.
+        """
+        key = market.sale_key(sale)
+        if key in self.pictures:
+            self.events.put(("pic", (key, self.pictures[key])))
+            return
+        if key in self._asked:
+            return
+        self._asked.add(key)
+
+        def load():
+            img = None
+            try:
+                url = market.image_in(sale) or market.listing_image(sale.get("url", ""))
+                if url:
                     from .variant_tab import fetch_image
-                    img = fetch_image(url)
-                except Exception:                             # noqa: BLE001
-                    img = None
-                self.events.put(("pic", (key, img)))
-            threading.Thread(target=load, daemon=True).start()
-        else:
-            self.pic.create_text(130, 90, fill=ui.C["faint"], justify="center",
-                                 text="No picture came with this sale.\n"
-                                      "Open it on eBay to see the card.")
+                    img = fetch_image(market.sized(url, 500))
+            except Exception:                                 # noqa: BLE001
+                img = None
+            self.events.put(("pic", (key, img)))
+        self._pool.submit(load)
 
-    def _show_pic(self, img):
+    def _got_pic(self, key, img):
+        self.pictures[key] = img
+        if key == self._sale_key_selected():
+            self._show_pic(img)
+        self._draw_thumb(key)
+
+    def _show_pic(self, img, waiting=False):
         from PIL import Image, ImageTk
         self.pic.delete("all")
-        if img is None:
-            self.pic.create_text(130, 90, text="picture unavailable", fill=ui.C["faint"])
-            return
         w, h = max(self.pic.winfo_width(), 200), max(self.pic.winfo_height(), 150)
+        if img is None:
+            sel = self.sales.selection()
+            url = self.rows[int(sel[0])][2].get("url") if sel else ""
+            self.pic.create_text(w / 2, h / 2, fill=ui.C["faint"], justify="center", text=(
+                "loading picture…" if waiting else
+                "No picture could be found for this sale.\nClick to open it on eBay."
+                if url else "No picture, and no link, came with this sale."))
+            return
         k = min(w / img.size[0], h / img.size[1])
         img = img.resize((max(1, int(img.size[0] * k)), max(1, int(img.size[1] * k))),
                          Image.LANCZOS)
         photo = ImageTk.PhotoImage(img)
         self.photos = [photo]
         self.pic.create_image(w / 2, h / 2, image=photo)
+
+    def _gallery_rows(self):
+        return [(i, st, why, s) for i, (st, why, s) in enumerate(self.rows)
+                if st == KEPT or self.show_out.get()][:MAX_PICTURES]
+
+    def _draw_gallery(self):
+        """The Pictures view: a grid of the listings' photos, loaded as they arrive."""
+        g = self.gallery
+        if not g.winfo_ismapped():
+            return
+        g.delete("all")
+        self.thumbs = []
+        self._cells = {}
+        rows = self._gallery_rows()
+        if not rows:
+            g.create_text(max(g.winfo_width(), 200) / 2, 60, fill=ui.C["faint"],
+                          text="Search for a card to see its listings' pictures here")
+            return
+        pad, cap = 10, 34
+        cols = max(1, (max(g.winfo_width(), 200) - pad) // (THUMB + pad))
+        for n, (i, state, why, s) in enumerate(rows):
+            x = pad + (n % cols) * (THUMB + pad)
+            y = pad + (n // cols) * (THUMB + cap + pad)
+            colour = ui.C["ok"] if state == KEPT else (
+                ui.C["bad"] if why == market.LEFT_OUT else ui.C["border"])
+            tag = f"cell{i}"
+            g.create_rectangle(x - 2, y - 2, x + THUMB + 2, y + THUMB + 2, outline=colour,
+                               width=2, tags=(tag, f"frame{i}"))
+            g.create_rectangle(x, y, x + THUMB, y + THUMB, fill=ui.C["sunken"], outline="",
+                               tags=(tag,))
+            g.create_text(x + 4, y + THUMB + 4, anchor="nw", tags=(tag,), font="CCSmall",
+                          fill=ui.C["text"] if state == KEPT else ui.C["faint"],
+                          text=f"{_money(pricing.sale_total(s))}  "
+                               f"{(s.get('date') or '')[:10]}\n"
+                               + ("counted" if state == KEPT else why)[:24])
+            g.tag_bind(tag, "<Button-1>", lambda _e, i=i: self._select_sale(i))
+            g.tag_bind(tag, "<Double-1>", lambda _e: self.open_listing())
+            self._cells[market.sale_key(s)] = (i, x, y)
+            self._draw_thumb(market.sale_key(s))
+            self._want(s)
+        last = len(rows) - 1
+        g.configure(scrollregion=(0, 0, cols * (THUMB + pad) + pad,
+                                  pad + (last // cols + 1) * (THUMB + cap + pad)))
+        sel = self.sales.selection()
+        if sel:
+            self._mark_gallery(sel[0])
+
+    def _draw_thumb(self, key):
+        from PIL import Image, ImageTk
+        cell = getattr(self, "_cells", {}).get(key)
+        if cell is None or not self.gallery.winfo_ismapped():
+            return
+        i, x, y = cell
+        img = self.pictures.get(key, "pending")
+        g = self.gallery
+        g.delete(f"img{i}")
+        if img == "pending":
+            g.create_text(x + THUMB / 2, y + THUMB / 2, text="…", fill=ui.C["faint"],
+                          tags=(f"img{i}", f"cell{i}"))
+            return
+        if img is None:
+            g.create_text(x + THUMB / 2, y + THUMB / 2, text="no picture", fill=ui.C["faint"],
+                          font="CCSmall", tags=(f"img{i}", f"cell{i}"))
+            return
+        im = img.copy()
+        im.thumbnail((THUMB, THUMB), Image.LANCZOS)
+        photo = ImageTk.PhotoImage(im)
+        self.thumbs.append(photo)
+        g.create_image(x + THUMB / 2, y + THUMB / 2, image=photo, tags=(f"img{i}", f"cell{i}"))
+
+    def _mark_gallery(self, iid):
+        g = self.gallery
+        g.delete("chosen")
+        for key, (i, x, y) in getattr(self, "_cells", {}).items():
+            if str(i) == iid:
+                g.create_rectangle(x - 5, y - 5, x + THUMB + 5, y + THUMB + 5,
+                                   outline=ui.C["accent"], width=3, tags=("chosen",))
 
     def open_listing(self):
         url = self._sale_url()

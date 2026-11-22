@@ -174,6 +174,31 @@ def market_checks(work):
 
     compfinder_checks()
 
+    # Listing pictures: found under any name in the evidence, else read once
+    # from the listing's eBay page and remembered.
+    check(market.image_in({"url": "https://www.ebay.co.uk/itm/1", "extra": {
+        "pics": ["https://i.ebayimg.com/images/g/abc/s-l140.jpg"]}}) ==
+        "https://i.ebayimg.com/images/g/abc/s-l140.jpg", "picture under an odd name missed")
+    check(market.image_in({"url": "https://www.ebay.co.uk/itm/1", "title": "x"}) == "",
+          "a listing link is not a picture")
+    check(market.sized("https://i.ebayimg.com/images/g/abc/s-l140.jpg", 500) ==
+          "https://i.ebayimg.com/images/g/abc/s-l500.jpg", "eBay picture not resized")
+    pages = []
+
+    def page(url):
+        pages.append(url)
+        return ('<html><head><meta property="og:image" '
+                'content="https://i.ebayimg.com/images/g/xyz/s-l1600.jpg"></head></html>')
+    item = "https://www.ebay.co.uk/itm/123"
+    check(market.listing_image(item, get=page) ==
+          "https://i.ebayimg.com/images/g/xyz/s-l1600.jpg", "og:image not read")
+    market.listing_image(item, get=page)
+    check(len(pages) == 1, "a listing's page was fetched twice")
+    check(market.listing_image("https://www.ebay.co.uk/itm/9", get=lambda u: "<html/>") == "",
+          "a page without a picture should give none")
+    check(market.listing_image("https://www.ebay.co.uk/itm/9", get=page) == "",
+          "a listing that gave no picture should not be asked again within a day")
+
     url = market.ebay_sold_url("Lugia 78/124 Fates Collide Pokemon NM")
     check("LH_Sold=1" in url and "Pokemon" not in url and "NM" not in url,
           f"sold search URL wrong: {url}")

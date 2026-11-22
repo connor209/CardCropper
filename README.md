@@ -775,8 +775,12 @@ selected:
   far above the rest (a graded slab, say) is pinned to the top with ▲ rather
   than squashing the scale. Hover a dot for the listing; click it to select it.
 - **Sold listings** — each with whether it counted and why not (graded,
-  another printing, a lot, abroad…). Select one for its details, its
-  picture when the evidence carries one, and **Open on eBay ↗**.
+  another printing, a lot, abroad…). Select one for its details, its photo
+  and **Open on eBay ↗**. The **Pictures** tab shows the same sales as a grid
+  of photos — green border counted, grey left out; click one to select it.
+  A photo comes from the sale itself when Comp Finder sends one; otherwise
+  it is read once from the listing's eBay page and remembered in
+  `market.sqlite`, so looking again costs nothing.
 - **Leave out** (or Delete) works the price again without that sale — the
   "what if that one was a mistake?" — and **Put back** / **Reset what-if**
   undo it. A what-if changes nothing on any listing.

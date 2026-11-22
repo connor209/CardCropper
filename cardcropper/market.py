@@ -67,6 +67,107 @@ def clean_query(title):
     return re.sub(r"\s+", " ", t).strip()
 
 
+# ---------------------------------------------------------------- pictures
+
+_IMAGE_KEYS = ("image", "imageUrl", "image_url", "img", "thumbnail", "thumbnailUrl",
+               "picture", "pictureUrl", "galleryURL", "galleryUrl", "photo", "imageHref")
+_IMAGE_URL = re.compile(r"^https?://\S+?(\.(jpe?g|png|webp|gif)(\?\S*)?$|i\.ebayimg\.com/\S+)",
+                        re.I)
+
+
+def _find_image(value, depth=0):
+    if depth > 3:
+        return ""
+    if isinstance(value, str):
+        return value if _IMAGE_URL.match(value.strip()) else ""
+    if isinstance(value, dict):
+        for k in _IMAGE_KEYS:
+            got = _find_image(value.get(k), depth + 1)
+            if got:
+                return got
+        for v in value.values():
+            got = _find_image(v, depth + 1)
+            if got:
+                return got
+    if isinstance(value, (list, tuple)):
+        for v in value:
+            got = _find_image(v, depth + 1)
+            if got:
+                return got
+    return ""
+
+
+def image_in(sale):
+    """
+    A picture of the listing, if the evidence carries one — under whatever
+    name: the usual keys first, then any value that is plainly an image URL
+    (eBay's i.ebayimg.com above all). '' when there is none.
+    """
+    return _find_image({k: v for k, v in (sale or {}).items() if k != "url"})
+
+
+def sized(image_url, size=500):
+    """An eBay picture at another size: their URLs end s-l140.jpg, s-l500.jpg…"""
+    return re.sub(r"/s-l\d+(\.\w+)$", rf"/s-l{size}\1", image_url or "")
+
+
+_OG_IMAGE = re.compile(r'<meta[^>]+(?:property|name)=["\'](?:og:image|twitter:image)["\'][^>]*'
+                       r'content=["\']([^"\']+)', re.I)
+_OG_IMAGE_REV = re.compile(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*'
+                           r'(?:property|name)=["\'](?:og:image|twitter:image)["\']', re.I)
+_EBAYIMG = re.compile(r'https://i\.ebayimg\.com/images/g/[\w~-]+/s-l\d+\.(?:jpg|jpeg|png|webp)',
+                      re.I)
+#: How long a listing that gave no picture is left before it is asked again.
+NO_PICTURE_RETRY = 86400
+
+
+def _listing_page(url):
+    import urllib.request
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CardCropper",
+        "Accept": "text/html", "Accept-Language": "en-GB,en;q=0.8"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return resp.read(600_000).decode("utf-8", "replace")
+
+
+def listing_image(url, path=None, get=None, now=None):
+    """
+    The main picture of a sold listing, read from its eBay page — for sales
+    whose evidence came without one. Remembered in market.sqlite, so each
+    listing's page is fetched once; a listing that gave none is left a day
+    before asking again. '' when there is no picture to be had.
+    """
+    if not url or not url.startswith("http"):
+        return ""
+    now = now or time.time()
+    db = connect(path)
+    try:
+        row = db.execute("SELECT image, checked_at FROM pictures WHERE url=?",
+                         (url,)).fetchone()
+    finally:
+        db.close()
+    if row is not None and (row["image"] or now - row["checked_at"] < NO_PICTURE_RETRY):
+        return row["image"]
+    image = ""
+    try:
+        html = (get or _listing_page)(url)
+        m = _OG_IMAGE.search(html) or _OG_IMAGE_REV.search(html)
+        image = m.group(1) if m else ""
+        if not image:
+            m = _EBAYIMG.search(html)
+            image = m.group(0) if m else ""
+    except Exception:                                       # noqa: BLE001
+        image = ""
+    db = connect(path)
+    try:
+        db.execute("INSERT OR REPLACE INTO pictures (url, image, checked_at) VALUES (?,?,?)",
+                   (url, image, now))
+        db.commit()
+    finally:
+        db.close()
+    return image
+
+
 # ---------------------------------------------------------------- Comp Finder login
 
 _AUTH = re.compile(r"not signed in|sign in|signed out|log ?in|unauthori[sz]ed|forbidden|"
@@ -209,6 +310,8 @@ def connect(path=None):
         variant TEXT, source TEXT, searched_at REAL NOT NULL, n_kept INTEGER,
         n_found INTEGER, suggested REAL, query TEXT, evidence TEXT)""")
     db.execute("CREATE INDEX IF NOT EXISTS searches_title ON searches(title)")
+    db.execute("""CREATE TABLE IF NOT EXISTS pictures (
+        url TEXT PRIMARY KEY, image TEXT, checked_at REAL NOT NULL)""")
     db.commit()
     return db
 
