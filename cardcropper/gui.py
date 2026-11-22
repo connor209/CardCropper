@@ -862,6 +862,9 @@ def main():
         traceback.print_exc()
         lookup = None
     lib.open_in_grade = lambda path: (sh_.show("grade"), grade.load(path))
+    if lookup is not None:
+        condition.check_catalogue = lambda folder: (sh_.show("lookup"),
+                                                    lookup.check_batch(folder))
     ops = sh_.add_page("batch", OpsTab)
     ops.view_in_market = lambda folder: (sh_.show("prices"), prices.open_priced(folder))
     sh_.add_page("home", lambda m: shell_mod.HomePage(m, sh_))

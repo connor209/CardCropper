@@ -172,6 +172,11 @@ class ConditionTab(ttk.Frame):
                    command=self.open_prepared).pack(side="left", padx=(0, 6))
         ttk.Button(box, text="Open review sheet",
                    command=self.open_review).pack(side="left")
+        #: Set by the window: check this batch's scans against the catalogue.
+        self.check_catalogue = None
+        ttk.Button(box, text="Check against catalogue…",
+                   command=lambda: self.check_catalogue and self.check_catalogue(
+                       self.out_var.get().strip())).pack(side="left", padx=(6, 0))
         ttk.Button(box, text="Record grades & re-fit triage",
                    command=self.calibrate).pack(side="left", padx=(6, 0))
         ttk.Button(box, text="Write grades to a copy of the CSV",

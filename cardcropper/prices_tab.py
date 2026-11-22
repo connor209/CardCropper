@@ -264,6 +264,12 @@ class PricesTab(ttk.Frame):
                                "and flagged when its price moves.")
         self.trend_lbl = ttk.Label(head, style="Muted.TLabel")
         self.trend_lbl.grid(row=2, column=0, sticky="w")
+        self.ref_lbl = ttk.Label(head, style="Muted.TLabel")
+        self.ref_lbl.grid(row=3, column=0, sticky="w")
+        ui.tip(self.ref_lbl, "The catalogue's reference prices for the card its title finds "
+                             "— US TCGplayer and EU Cardmarket, not eBay UK. A cross-check, "
+                             "worth most when there are few UK sales.")
+        self.refs = {}
         ui.tip(self.use_btn, "Keep this price for this card at this condition. Batch & price "
                              "uses it for that card for the next "
                              f"{market.DECISION_DAYS} days instead of working one out — "
@@ -443,6 +449,10 @@ class PricesTab(ttk.Frame):
                     self.status.configure(text=msg, foreground=ui.C["bad"])
                 elif kind == "pic":
                     self._got_pic(*payload)
+                elif kind == "ref":
+                    title, text = payload
+                    self.refs[title] = text
+                    self._show_ref(title)
                 else:
                     self.search_btn.configure(state="normal")
                     priced, expected, evidence, note = payload[:4]
@@ -855,6 +865,7 @@ class PricesTab(ttk.Frame):
             points, watching = [], False
         text = market.describe_trend(points)
         self.trend_lbl.configure(text=f"Trend: {text}" if text else "")
+        self._want_ref(p.title)
         self.watch_btn.configure(state="normal", text="★ Watching" if watching else "☆ Watch")
         f = market.figures(p)
         price_note = f"{p.decision}: {p.reason}" if p.decision else ""
@@ -1346,6 +1357,51 @@ class PricesTab(ttk.Frame):
         self.title_var.set(title)
         self.status.configure(text="No saved search for that card yet — Search sold to get "
                                    "one.", foreground=ui.C["muted"])
+
+    # ------------------------------------------------------------ reference prices
+
+    def _want_ref(self, title):
+        """The catalogue's prices for the card, fetched once per title in the background."""
+        if title in self.refs:
+            self._show_ref(title)
+            return
+        self.refs[title] = None
+        self.ref_lbl.configure(text="")
+
+        def load():
+            try:
+                from . import catalog
+                res = catalog.search(market.clean_query(title), limit=3)
+                text = ""
+                if res:
+                    c = res[0]
+                    bits = []
+                    for source, val in (c.prices or {}).items():
+                        sym = "$" if "USD" in source else "€" if "EUR" in source else ""
+                        name = source.split(" (")[0]
+
+                        def fmt(v):
+                            try:
+                                return f"{sym}{float(v):.2f}"
+                            except (TypeError, ValueError):
+                                return str(v)
+                        if isinstance(val, dict):
+                            val = ", ".join(f"{k} {fmt(v)}" for k, v in list(val.items())[:2]
+                                            if v)
+                        elif val:
+                            val = fmt(val)
+                        if val:
+                            bits.append(f"{name} {val}")
+                    if bits:
+                        text = f"Reference ({c.name} {c.number}, {c.set_name}): " +                             " · ".join(bits[:3])
+            except Exception:                                 # noqa: BLE001
+                text = ""
+            self.events.put(("ref", (title, text)))
+        self._pool.submit(load)
+
+    def _show_ref(self, title):
+        if self.current is not None and self.priced[self.current].title == title:
+            self.ref_lbl.configure(text=self.refs.get(title) or "")
 
     def _show_chosen(self, p):
         try:

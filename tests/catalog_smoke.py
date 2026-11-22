@@ -219,6 +219,30 @@ def image_checks():
     check(catalog.similarity(catalog.fingerprint(bed), fa) > diff, "bed scan still matches")
 
 
+def batch_checks(work):
+    """A prepared batch checked card by card: right scans pass, a swapped one is caught."""
+    import csv as _csv
+    folder = os.path.join(work, "prepared")
+    pika, other = synthetic(1), synthetic(2)
+    for sku, img in (("KA1", pika), ("KA2", other)):
+        os.makedirs(os.path.join(folder, "cards", sku))
+        img.save(os.path.join(folder, "cards", sku, "front.jpg"), quality=95)
+    with open(os.path.join(folder, "triage.csv"), "w", encoding="utf-8", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=["sku", "title"])
+        w.writeheader()
+        w.writerow({"sku": "KA1", "title": "Pikachu 58/102 Base Set Pokemon NM"})
+        w.writerow({"sku": "KA2", "title": "Pikachu 58/102 Base Set Pokemon NM"})
+        w.writerow({"sku": "KA3", "title": "Pikachu 58/102 Base Set Pokemon NM"})
+    items = catalog.batch_items(folder)
+    check([i[0] for i in items] == ["KA1", "KA2", "KA3"], items)
+    get = FakeGet()
+    got = [catalog.check_card(t, f, get=get, load_image=lambda url: pika)
+           for _, t, f in items]
+    check(got[0]["verdict"] == "ok" and got[0]["best"].id == "base1-58", got[0])
+    check(got[1]["verdict"] == "mismatch", f"a scan of another card passed: {got[1]}")
+    check(got[2]["verdict"] == "no scan", got[2])
+
+
 def ebay_checks():
     url = catalog.ebay_sold_url("Pikachu 58/102 Base Set & co")
     check(url.startswith("https://www.ebay.co.uk/sch/i.html?"), url)
@@ -245,6 +269,7 @@ def main():
         variant_checks(pikachu, magician)
         image_checks()
         ebay_checks()
+        batch_checks(tempfile.mkdtemp(prefix="cc-batch-"))
         check(catalog.clear_cache() > 0 and not os.listdir(work), "cache cleared")
     finally:
         catalog.set_cache_dir(None)

@@ -142,7 +142,8 @@ class LookupTab(ttk.Frame):
         ui.tip(self.match_btn, "Pick a scan of the card. It is compared with every result's "
                                "catalogue image and the closest goes first. It tells you WHICH "
                                "card it is, not which printing.")
-        more = ui.more_menu(bar, [("Open eBay sold search ↗", self.open_sold),
+        more = ui.more_menu(bar, [("Check a whole batch…", self.check_batch), None,
+                                  ("Open eBay sold search ↗", self.open_sold),
                                   ("Copy eBay search title", self.copy_title), None,
                                   ("Clear cache", self.clear_cache)],
                             tip_text="Now-and-then actions: eBay sold listings for the selected "
@@ -321,6 +322,11 @@ class LookupTab(ttk.Frame):
     def _on_idle(self, _):
         self.search_btn.state(["!disabled"])
         self.match_btn.state(["!disabled"])
+        pending = getattr(self, "_pending_scan", None)
+        if pending and self.results:
+            # Opened from a batch check: match the card's own scan straight away.
+            self._pending_scan = None
+            self.match_scan(pending)
 
     def _on_status(self, text):
         self._say(text)
@@ -521,6 +527,15 @@ class LookupTab(ttk.Frame):
                                           filetypes=[("Images", kinds), ("All", "*.*")])
         if path:
             self.match_scan(path)
+
+    def check_batch(self, folder=None):
+        """Every card of a prepared batch against the catalogue (batch_check)."""
+        from .batch_check import BatchCheck
+
+        def open_one(title, front):
+            self.search(title)
+            self._pending_scan = front
+        BatchCheck(self.winfo_toplevel(), folder, on_open=open_one)
 
     def match_scan(self, path):
         """Compare the scan at `path` with every current result's catalogue image."""

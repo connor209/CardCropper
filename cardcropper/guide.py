@@ -281,6 +281,9 @@ TIPS = {
                          "stop.",
         "Open folder": "Open the output folder.",
         "Open review sheet": "Open conditioning-review.csv to type the grades in.",
+        "Check against catalogue…": "Compare every card's front scan with the catalogue "
+                                    "pictures its title finds, and list the ones that do not "
+                                    "look like their title — before they are listed.",
         "Open prepared batch…": "Open a batch prepared earlier — its output folder — to "
                                 "grade it here without preparing it again.",
         "Record grades & re-fit triage": "Record the looked-at grades, propose better triage "

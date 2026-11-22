@@ -727,3 +727,68 @@ def rank_matches(scan_img, candidates_with_images):
         out.append((similarity(fp, other), card))
     out.sort(key=lambda r: -r[0])
     return out
+
+
+# ---------------------------------------------------------------- a whole batch
+
+#: A batch check's verdicts, worst first.
+BATCH_VERDICTS = ("mismatch", "check", "not found", "no scan", "ok")
+
+
+def batch_items(folder):
+    """
+    The cards of a batch prepared on Condition a CSV: [(sku, title, front scan)]
+    from its triage.csv and cards/<sku>/front.jpg.
+    """
+    import csv
+    from . import conditioning
+    with open(os.path.join(folder, "triage.csv"), encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    return [(r.get("sku", ""), r.get("title", ""),
+             os.path.join(folder, "cards", conditioning.safe_name(r.get("sku", "")),
+                          "front.jpg")) for r in rows]
+
+
+def check_card(title, front_path, get=None, load_image=None, limit=8):
+    """
+    Does this scan look like the card its title names? Searches the catalogue
+    for the title, compares the scan with every candidate's picture, and
+    returns {verdict, score, best (CatalogCard or None), findings, candidates}.
+
+    * ok — the scan looks like a card the title finds (≥ SAME_CARD);
+    * check — the closest is only UNCERTAIN..SAME_CARD alike: look;
+    * mismatch — nothing the title finds looks like the scan: a wrong
+      title, a wrong match, or the wrong scan paired with this card;
+    * not found / no scan — nothing to compare.
+
+    It identifies the card, not the printing: a scan cannot show foil.
+    """
+    from PIL import Image
+    if not front_path or not os.path.exists(front_path):
+        return {"verdict": "no scan", "score": None, "best": None, "findings": [],
+                "candidates": 0}
+    res = search(title, limit=limit, get=get)
+    if not res:
+        return {"verdict": "not found", "score": None, "best": None, "findings": [],
+                "candidates": 0}
+    if load_image is None:
+        from .variant_tab import fetch_image as load_image
+    pairs = []
+    for card in res:
+        try:
+            pairs.append((card, load_image(card.image_small or card.image_large)))
+        except Exception:                                   # noqa: BLE001
+            pairs.append((card, None))
+    with Image.open(front_path) as im:
+        scan = card_only(im.convert("RGB"))
+    ranked = rank_matches(scan, pairs)
+    if not ranked:
+        return {"verdict": "not found", "score": None, "best": None,
+                "findings": ["no catalogue picture could be loaded"], "candidates": len(res)}
+    score, best = ranked[0]
+    verdict_ = "ok" if score >= SAME_CARD else "check" if score >= UNCERTAIN else "mismatch"
+    parsed = parse_title(title)
+    findings = list(check_variant(parsed.get("printing") or set(), best,
+                                  parsed.get("rarity") or ""))
+    return {"verdict": verdict_, "score": score, "best": best, "findings": findings,
+            "candidates": len(res)}
