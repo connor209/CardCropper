@@ -332,16 +332,26 @@ def batch_comps(cards, base=COMP_FINDER, cookie=None, fresh=False, per_call=PER_
     one call after another (they share SoldComps' rate limit). Returns
     {id: result}. `post(url, body)` replaces the HTTP call in tests.
     """
-    cookie = cookie or comp_finder_cookie()
-    if not cookie and post is None:
+    # Signed in from the app: keep the session fresh before every call (a
+    # session lasts about an hour; a long batch can outlast it). A cookie
+    # passed in, or pasted by hand, is used as it is.
+    signed_in = cookie is None and post is None
+
+    def current_cookie():
+        if signed_in:
+            from . import compfinder_auth
+            compfinder_auth.ensure_fresh()
+        return cookie or comp_finder_cookie()
+
+    if not current_cookie() and post is None:
         raise CompFinderError(
-            f"no Comp Finder login — paste your session cookie into {cookie_path()} "
-            "(or set COMP_FINDER_COOKIE)")
+            "no Comp Finder login — sign in from the Market page (More → Comp Finder "
+            f"sign-in…), or paste a session cookie into {cookie_path()}")
 
     def http(url, body):
         req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"),
                                      headers={"Content-Type": "application/json",
-                                              "Cookie": cookie}, method="POST")
+                                              "Cookie": current_cookie()}, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))

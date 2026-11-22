@@ -870,7 +870,7 @@ def main():
         for t in (getattr(o, "worker", None), getattr(o, "planner", None)))
 
     # Tools menu: the settings and logins that used to hide on single pages.
-    sh_.add_tool("Comp Finder login…", lambda: (sh_.show("prices"), prices.set_login()))
+    sh_.add_tool("Comp Finder sign-in…", lambda: (sh_.show("prices"), prices.set_login()))
     sh_.add_tool("Import grades into the library…",
                  lambda: (sh_.show("library"), lib.import_folder()))
     sh_.add_tool("Check for updates", lambda: check_updates(), separator=True)
@@ -891,9 +891,11 @@ def main():
                        "Click to open it.", command=lambda: sh_.show("library"))
         except Exception:                                   # noqa: BLE001
             pass
-        from . import market
-        sh_.status("cf", market.LOGIN_TEXT[market.login_state()],
-                   "Sold-listing searches go through Comp Finder. Click to set the login.",
+        from . import compfinder_auth, market
+        state, who = market.login_state(), compfinder_auth.signed_in_as()
+        sh_.status("cf", f"Comp Finder: {who}" if who and state == "saved"
+                   else market.LOGIN_TEXT[state],
+                   "Sold-listing searches go through Comp Finder. Click to sign in or out.",
                    command=lambda: (sh_.show("prices"), prices.set_login()))
     sh_.on_status = status
 

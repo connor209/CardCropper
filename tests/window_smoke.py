@@ -22,6 +22,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 from PIL import Image
 
@@ -171,6 +172,8 @@ def market_checks(work):
     check(market.login_state() == "saved", "a fresh cookie should clear the refusal")
     os.remove(pricing.cookie_path())
 
+    compfinder_checks()
+
     url = market.ebay_sold_url("Lugia 78/124 Fates Collide Pokemon NM")
     check("LH_Sold=1" in url and "Pokemon" not in url and "NM" not in url,
           f"sold search URL wrong: {url}")
@@ -236,6 +239,76 @@ def review_panel_checks(work):
               "a grade saved on the Condition tab did not reach the library")
     finally:
         root.destroy()
+
+
+def compfinder_checks():
+    """Signing in to Comp Finder from the app, and staying signed in."""
+    import base64
+    import json as _json
+    from cardcropper import compfinder_auth as cfa, market, pricing
+
+    calls = []
+
+    def post(path, body):
+        calls.append((path, dict(body)))
+        if "password" in path:
+            if body["password"] != "right":
+                raise cfa.SignInError("Invalid login credentials")
+            n = 1
+        else:
+            n = int(body["refresh_token"][1:]) + 1
+        return {"access_token": f"a{n}", "refresh_token": f"r{n}", "expires_in": 3600,
+                "token_type": "bearer", "user": {"email": "me@example.com", "id": "u1"}}
+
+    try:
+        cfa.sign_in("me@example.com", "wrong", post=post)
+        raise AssertionError("a wrong password signed in")
+    except cfa.SignInError:
+        pass
+    check(cfa.sign_in(" me@example.com ", "right", post=post) == "me@example.com",
+          "sign-in should say who it signed in as")
+    check(calls[-1][1]["email"] == "me@example.com", "email not trimmed")
+    cookie = pricing.comp_finder_cookie()
+    name, value = cookie.split("=", 1)
+    check(name == cfa.COOKIE_NAME and value.startswith("base64-"), f"cookie wrong: {cookie}")
+    raw = value[len("base64-"):]
+    session = _json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+    check(session["access_token"] == "a1" and session["expires_at"] > 0,
+          f"cookie does not hold the session: {session}")
+    for path in (cfa.session_path(), pricing.cookie_path()):
+        with open(path, encoding="utf-8") as fh:
+            check("right" not in fh.read(), f"the password was written to {path}")
+    check(market.login_state() == "saved" and cfa.signed_in_as() == "me@example.com",
+          "not shown as signed in")
+
+    # A long session is split into chunks the way @supabase/ssr splits it.
+    long_session = {"access_token": "x" * 5000}
+    whole = "base64-" + base64.urlsafe_b64encode(_json.dumps(
+        long_session, separators=(",", ":")).encode()).decode().rstrip("=")
+    parts = cfa.cookie_for(long_session).split("; ")
+    names = [p.split("=", 1)[0] for p in parts]
+    values = [p.split("=", 1)[1] for p in parts]
+    check(names == [f"{cfa.COOKIE_NAME}.{i}" for i in range(len(parts))] and len(parts) > 1
+          and all(len(v) <= cfa.CHUNK for v in values) and "".join(values) == whole,
+          f"chunking wrong: {names}, {[len(v) for v in values]}")
+
+    n = len(calls)
+    check(not cfa.ensure_fresh(post=post) and len(calls) == n,
+          "a fresh session should not be refreshed")
+    check(cfa.ensure_fresh(now=time.time() + 3500, post=post), "an expiring session was kept")
+    check(calls[-1][1] == {"refresh_token": "r1"}, "refreshed with the wrong token")
+    check("a2" in base64.urlsafe_b64decode(
+        pricing.comp_finder_cookie().split("base64-")[1] + "==").decode(),
+        "the cookie was not rewritten after a refresh")
+
+    def refused(path, body):
+        raise cfa.SignInError("refresh token revoked")
+    check(not cfa.ensure_fresh(now=time.time() + 9999, post=refused),
+          "a failed refresh must not raise — the call goes ahead and says what is wrong")
+
+    cfa.sign_out()
+    check(not pricing.comp_finder_cookie() and not cfa.signed_in_as(),
+          "sign-out left the session behind")
 
 
 def window_checks():

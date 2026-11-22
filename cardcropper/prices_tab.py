@@ -110,7 +110,7 @@ class PricesTab(ttk.Frame):
         ui.tip(self.search_btn, lambda: (
             "Find this card's recent UK sold listings through Comp Finder and price it "
             "under the house rules. (Enter)" if pricing.comp_finder_cookie() else
-            "Needs your Comp Finder login first — More → Comp Finder login…  "
+            "Needs your Comp Finder login first — More → Comp Finder sign-in…  "
             "Until then, eBay ↗ opens the sold search in your browser."))
         b = ttk.Button(bar, text="eBay ↗", command=self.open_ebay)
         b.grid(row=0, column=5, padx=(6, 0))
@@ -124,10 +124,10 @@ class PricesTab(ttk.Frame):
             ("Import sales from CSV…", self.import_csv),
             ("eBay live listings ↗", self.open_ebay_active),
             None,
-            ("Comp Finder login…", self.set_login),
+            ("Comp Finder sign-in…", self.set_login),
             ("Clear search history", self.clear_history),
         ], tip_text="Golden pricing test, priced batches, importing sales from Terapeak "
-                    "or a sheet, and the Comp Finder login.")
+                    "or a sheet, and Comp Finder sign-in.")
         more.grid(row=0, column=6, padx=(6, 0))
 
         self.status = ttk.Label(self, style="Muted.TLabel", justify="left")
@@ -347,13 +347,12 @@ class PricesTab(ttk.Frame):
         self.status.configure(
             foreground=ui.C["bad"],
             text=f"Comp Finder did not accept your saved login (it said: “{exc}”). The "
-                 "session has probably expired — paste a fresh cookie (More → Comp Finder "
-                 "login…). eBay ↗ still opens the sold listings in your browser.")
+                 "session has probably expired — sign in again (More → Comp Finder "
+                 "sign-in…). eBay ↗ still opens the sold listings in your browser.")
         if messagebox.askyesno(
-                "Comp Finder login expired",
+                "Comp Finder sign-in expired",
                 f"Comp Finder said: “{exc}”\n\nYour saved login is no longer accepted — "
-                "sessions expire after a while. Sign in to Comp Finder in your browser, "
-                "copy a fresh cookie, and paste it in.\n\nPaste a new login now?\n\n"
+                "sessions expire after a while.\n\nPaste a new login now?\n\n"
                 "(No: use eBay ↗ to see the sold listings in your browser instead.)"):
             self.set_login(retry=True)
 
@@ -361,13 +360,13 @@ class PricesTab(ttk.Frame):
         state = market.login_state()
         if state == "rejected":
             self.status.configure(
-                text="Comp Finder no longer accepts your saved login — paste a fresh one "
-                     "(More → Comp Finder login…). eBay ↗ works without it.",
+                text="Comp Finder no longer accepts your saved login — sign in again "
+                     "(More → Comp Finder sign-in…). eBay ↗ works without it.",
                 foreground=ui.C["warn"])
         elif state == "none":
             self.status.configure(
-                text="Not logged in to Comp Finder — searching needs it (More → Comp Finder "
-                     "login…). History, imported sales and eBay ↗ work without it.",
+                text="Not signed in to Comp Finder — searching needs it (More → Comp Finder "
+                     "sign-in…). History, imported sales and eBay ↗ work without it.",
                 foreground=ui.C["warn"])
 
     # ------------------------------------------------------------ sources
@@ -427,7 +426,7 @@ class PricesTab(ttk.Frame):
         if not pricing.comp_finder_cookie():
             self._login_hint()
             if messagebox.askyesno("Market", "Searching sold listings needs your Comp Finder "
-                                             "login.\n\nSet it now? (Or press No and use "
+                                             "account.\n\nSign in now? (Or press No and use "
                                              "eBay ↗ to search in your browser.)"):
                 self.set_login()
             return
@@ -462,39 +461,131 @@ class PricesTab(ttk.Frame):
         self.events.put(("ok", ([p], {}, {"imported": ev}, note)))
 
     def set_login(self, retry=False):
-        """Paste the Comp Finder session cookie into its file — no setx, no truncation."""
+        """
+        Sign in to Comp Finder with its email and password — the app then keeps
+        the session fresh by itself (see compfinder_auth). Pasting a cookie
+        from the browser is still there underneath, for when sign-in cannot
+        be used.
+        """
+        from . import compfinder_auth, folders
         top = tk.Toplevel(self)
-        top.title("Comp Finder login")
+        top.title("Comp Finder sign-in")
         top.transient(self.winfo_toplevel())
-        f = ttk.Frame(top, padding=14)
+        top.resizable(False, False)
+        f = ttk.Frame(top, padding=16)
         f.pack(fill="both", expand=True)
-        ttk.Label(f, text="Comp Finder login", style="Heading.TLabel").pack(anchor="w")
-        ttk.Label(f, style="Muted.TLabel", wraplength=520, justify="left", text=(
-            "Sign in to Comp Finder in your browser, open the developer tools (F12) → "
-            "Network, click any request to comp-finder, and copy the whole Cookie request "
-            "header. Paste it below. It is saved in the settings folder, not sent anywhere "
-            "but Comp Finder.")).pack(anchor="w", pady=(4, 8))
-        box = tk.Text(f, height=6, width=70, wrap="char")
-        box.pack(fill="both", expand=True)
-        box.insert("1.0", pricing.comp_finder_cookie())
+        f.columnconfigure(1, weight=1)
+        ttk.Label(f, text="Sign in to Comp Finder", style="Heading.TLabel")\
+            .grid(row=0, column=0, columnspan=2, sticky="w")
+        who = compfinder_auth.signed_in_as()
+        state = market.login_state()
+        ttk.Label(f, style="Muted.TLabel", wraplength=440, justify="left", text=(
+            (f"Signed in as {who}." + (" Comp Finder has stopped accepting this session — "
+                                       "sign in again." if state == "rejected" else "")
+             if who else "The same email and password as on the Comp Finder website.")
+            + " Your password is sent to Comp Finder's sign-in service once and is never "
+              "saved; the app keeps the session fresh from then on."))\
+            .grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 10))
+        email = tk.StringVar(value=who or folders.load_settings().get("comp_finder_email", ""))
+        password = tk.StringVar()
+        ttk.Label(f, text="Email").grid(row=2, column=0, sticky="w", pady=2)
+        e1 = ttk.Entry(f, textvariable=email, width=36)
+        e1.grid(row=2, column=1, sticky="ew", pady=2)
+        ttk.Label(f, text="Password").grid(row=3, column=0, sticky="w", pady=2)
+        e2 = ttk.Entry(f, textvariable=password, show="•", width=36)
+        e2.grid(row=3, column=1, sticky="ew", pady=2)
+        msg = ttk.Label(f, wraplength=440, justify="left")
+        msg.grid(row=4, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
-        def save():
+        def done(ok, text):
+            if not top.winfo_exists():
+                return
+            sign_btn.configure(state="normal", text="Sign in")
+            if not ok:
+                msg.configure(text=text, foreground=ui.C["bad"])
+                return
+            market.mark_login(rejected=False)
+            folders.save_settings(comp_finder_email=email.get().strip())
+            top.destroy()
+            self.status.configure(text=f"Signed in to Comp Finder as {text}.",
+                                  foreground=ui.C["ok"])
+            if retry and self.title_var.get().strip():
+                self.lookup()
+
+        def sign_in():
+            addr, pw = email.get(), password.get()
+            password.set("")
+            sign_btn.configure(state="disabled", text="Signing in…")
+            msg.configure(text="")
+
+            def run():
+                try:
+                    result = (True, compfinder_auth.sign_in(addr, pw))
+                except compfinder_auth.SignInError as exc:
+                    text = str(exc)
+                    if "invalid" in text.lower() and "credential" in text.lower():
+                        text = "That email and password were not accepted."
+                    result = (False, f"Could not sign in: {text}")
+                self.after(0, lambda: done(*result))
+            threading.Thread(target=run, daemon=True).start()
+
+        def sign_out():
+            compfinder_auth.sign_out()
+            market.mark_login(rejected=False)
+            top.destroy()
+            self.status.configure(text="Signed out of Comp Finder.", foreground=ui.C["muted"])
+
+        row = ttk.Frame(f)
+        row.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        sign_btn = ttk.Button(row, text="Sign in", style="Accent.TButton", command=sign_in)
+        sign_btn.pack(side="right")
+        ttk.Button(row, text="Cancel", style="Ghost.TButton", command=top.destroy)\
+            .pack(side="right", padx=6)
+        if who or pricing.comp_finder_cookie():
+            out = ttk.Button(row, text="Sign out", command=sign_out)
+            out.pack(side="left")
+            ui.tip(out, "Forget the saved session and cookie on this computer.")
+
+        # The old way, kept for when sign-in cannot be used: a cookie copied
+        # out of the browser's developer tools.
+        adv = ttk.Frame(f)
+        shown = tk.BooleanVar(value=False)
+
+        def toggle():
+            if shown.get():
+                adv.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            else:
+                adv.grid_remove()
+        ttk.Checkbutton(f, text="Paste a cookie from the browser instead", variable=shown,
+                        command=toggle).grid(row=6, column=0, columnspan=2, sticky="w",
+                                             pady=(14, 0))
+        ttk.Label(adv, style="Muted.TLabel", wraplength=440, justify="left", text=(
+            "Signed in to Comp Finder in your browser: F12 → Network, click any request to "
+            "comp-finder, copy the whole Cookie request header and paste it here. A pasted "
+            "cookie is not refreshed — it stops working when that session expires.")).pack(
+            anchor="w")
+        box = tk.Text(adv, height=4, width=60, wrap="char")
+        box.pack(fill="x", pady=(4, 4))
+        if not who:
+            box.insert("1.0", pricing.comp_finder_cookie())
+
+        def save_cookie():
             text = " ".join(box.get("1.0", "end").split())
+            compfinder_auth.forget_session()
             os.makedirs(os.path.dirname(pricing.cookie_path()), exist_ok=True)
             with open(pricing.cookie_path(), "w", encoding="utf-8") as fh:
                 fh.write(text)
-            top.destroy()
             market.mark_login(rejected=False)
-            self.status.configure(text="Comp Finder login saved." if text else
-                                  "Comp Finder login cleared.", foreground=ui.C["ok"])
+            top.destroy()
+            self.status.configure(text="Comp Finder cookie saved." if text else
+                                  "Comp Finder cookie cleared.", foreground=ui.C["ok"])
             if retry and text and self.title_var.get().strip():
                 self.lookup()
-        row = ttk.Frame(f)
-        row.pack(fill="x", pady=(10, 0))
-        ttk.Button(row, text="Save", style="Accent.TButton", command=save).pack(side="right")
-        ttk.Button(row, text="Cancel", style="Ghost.TButton", command=top.destroy)\
-            .pack(side="right", padx=6)
-        box.focus_set()
+        ttk.Button(adv, text="Save cookie", command=save_cookie).pack(anchor="e")
+
+        top.bind("<Return>", lambda _e: sign_in() if not shown.get() else None)
+        top.bind("<Escape>", lambda _e: top.destroy())
+        (e2 if email.get() else e1).focus_set()
 
     def open_ebay(self):
         title = self.title_var.get().strip() or (

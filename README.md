@@ -789,8 +789,19 @@ searching or logging in; it is priced again under today's rules when opened.
 always available, no login. **More → Import sales from CSV…** prices sales
 copied out of Terapeak or eBay's sold search (any CSV with a title and price
 column; postage, date, URL and condition are used when present) under exactly
-the same rules. **More → Comp Finder login…** pastes the session cookie
-straight into its file.
+the same rules.
+
+**Signing in to Comp Finder.** **More → Comp Finder sign-in…** (or click the
+Comp Finder figure in the status bar) takes your Comp Finder email and
+password — the same as on its website — and signs in the way its own login
+page does. The password is sent once and never saved. The app keeps the
+session (`comp-finder-session.json` in the settings folder) and refreshes it
+by itself before every Comp Finder call, so it does not run out the way a
+pasted cookie does after about an hour. Batch & price and the command line
+use the same session. Pasting a cookie from the browser is still there in the
+same window, under **Paste a cookie from the browser instead**. If Comp Finder
+ever refuses the session, the Market page says so and offers to sign in
+again.
 
 ### Card lookup
 

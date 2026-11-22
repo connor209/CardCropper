@@ -406,10 +406,12 @@ class HomePage(ttk.Frame):
             self.figures["searches"].set(str(len(market.history(limit=10000))), "")
         except Exception:                                   # noqa: BLE001
             pass
-        state = market.login_state()
+        from . import compfinder_auth
+        state, who = market.login_state(), compfinder_auth.signed_in_as()
         self.figures["login"].set(
-            {"saved": "Login saved", "none": "Not set", "rejected": "Expired"}[state],
-            "" if state == "saved" else "Market → More → Comp Finder login…",
+            {"saved": "Signed in" if who else "Cookie saved", "none": "Not signed in",
+             "rejected": "Expired"}[state],
+            who if state == "saved" else "Market → More → Comp Finder sign-in…",
             colour={"saved": ui.C["ok"], "none": ui.C["warn"], "rejected": ui.C["bad"]}[state])
 
     def search_prices(self):

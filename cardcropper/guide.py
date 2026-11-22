@@ -159,7 +159,7 @@ house rules make the price.
 • Leave out a sale that looks wrong to see the price without it (a what-if only).
 
 History keeps every search with its listings. More ▾ has the golden test, priced batches,
-importing sales from a Terapeak CSV, and the Comp Finder login."""),
+importing sales from a Terapeak CSV, and Comp Finder sign-in."""),
 
     "batch": dict(
         label="Batch & price", icon="⚙",
@@ -371,7 +371,9 @@ TIPS = {
                                "chart and every sold listing behind it.",
         "Test (golden prices)": "Price the golden cards live and check the rules still give "
                                 "the expected prices.",
-        "Comp Finder login": "Open the file the Comp Finder session cookie goes in.",
+        "Comp Finder login": "Open the file a pasted Comp Finder cookie goes in. Easier: sign in "
+                             "with your email and password from Market → More → Comp "
+                             "Finder sign-in…, and the app keeps the session fresh.",
     },
 }
 
