@@ -92,14 +92,15 @@
   }
 
   async function api(method, path, body) {
-    const call = async (force) => fetch(BASE + path, {
+    // Since late Nov 2026 the site signs in with its own session cookie and
+    // sends X-Cu-Request: 1 on every backend call; a call without that header
+    // is refused with 403 BAD_REQUEST_ORIGIN. Make the call the way the page does.
+    const res = await fetch(BASE + path, {
       method,
-      headers: { Authorization: `Bearer ${await token(force)}`, "Content-Type": "application/json",
-                 Accept: "application/json" },
+      credentials: "include",
+      headers: { "X-Cu-Request": "1", "Content-Type": "application/json", Accept: "application/json" },
       body: body ? JSON.stringify(body) : undefined
     });
-    let res = await call(false);
-    if (res.status === 401) res = await call(true); // token revoked early: refresh once and retry
     const text = await res.text();
     let data;
     try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }

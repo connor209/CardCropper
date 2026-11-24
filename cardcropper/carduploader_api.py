@@ -30,7 +30,8 @@ def _get(path, token, timeout=60):
         raise RuntimeError("no CardUploader token — copy one from the extension, or "
                            "save the JSON from the extension and load the file")
     req = urllib.request.Request(BASE + path, headers={
-        "Authorization": f"Bearer {token}", "Accept": "application/json"})
+        "Authorization": f"Bearer {token}", "Accept": "application/json",
+        "X-Cu-Request": "1"})  # the site refuses calls without it (403 BAD_REQUEST_ORIGIN)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
