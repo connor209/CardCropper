@@ -7,6 +7,7 @@
  * without notice. Check CardUploader's terms.
  *
  * What it does:
+ *  - Copy the session (cookie) for CardCropper's read-only "CardUploader jobs".
  *  - Save job data (GET /jobs/{id}/data) and batch history (GET /jobs/history)
  *    as JSON files for CardCropper to read.
  *  - Apply a CardCropper change file: read the job fresh, show the diff
@@ -25,46 +26,36 @@
 
   // ------------------------------------------------------------ auth + API
 
-  function token() {
-    return new Promise((resolve, reject) => {
-      const open = indexedDB.open("firebaseLocalStorageDb");
-      open.onerror = () => reject(new Error("cannot open firebaseLocalStorageDb — are you logged in?"));
-      open.onsuccess = () => {
-        const db = open.result;
-        const names = Array.from(db.objectStoreNames);
-        if (!names.length) return reject(new Error("no Firebase session store"));
-        const req = db.transaction(names[0], "readonly").objectStore(names[0]).getAll();
-        req.onerror = () => reject(req.error);
-        req.onsuccess = () => {
-          for (const row of req.result || []) {
-            const t = row && row.value && row.value.stsTokenManager;
-            if (t && t.accessToken) {
-              if (t.expirationTime && t.expirationTime < Date.now() + 60000) {
-                return reject(new Error("the session token has expired — reload the page and try again"));
-              }
-              return resolve(t.accessToken);
-            }
-          }
-          reject(new Error("no access token found — log in to CardUploader"));
-        };
-      };
-    });
-  }
+  // CardUploader signs the tab in with an httpOnly session cookie (set by
+  // POST /backend/session) and expects an "x-cu-request: 1" header on every
+  // backend call — the Firebase bearer token is no longer accepted (changed
+  // after 21 Nov 2026). Same-origin fetches send the cookie by themselves.
+  const CU_HEADER = "x-cu-request";
 
   async function api(method, path, body) {
-    const t = await token();              // fresh every call: tokens last ~1 hour
+    const headers = { [CU_HEADER]: "1", "Content-Type": "application/json",
+                      Accept: "application/json" };
+    if (method !== "GET" && method !== "HEAD") headers["Idempotency-Key"] = crypto.randomUUID();
     const res = await fetch(BASE + path, {
-      method,
-      headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json",
-                 Accept: "application/json" },
+      method, headers, credentials: "same-origin", cache: "no-store",
       body: body ? JSON.stringify(body) : undefined
     });
     const text = await res.text();
     let data;
     try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    if (res.status === 401) throw new Error(`${method} ${path}: signed out of CardUploader — reload the page and sign in again`);
     if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status} ${text.slice(0, 200)}`);
     if (data && data.success === false) throw new Error(`${method} ${path}: ${JSON.stringify(data).slice(0, 200)}`);
     return data;
+  }
+
+  // The session cookie is httpOnly, so the page cannot read it; the
+  // extension's background worker can (cookies permission).
+  async function sessionCookies() {
+    const r = await chrome.runtime.sendMessage({ type: "cc-session-cookies" });
+    if (!r || r.error) throw new Error((r && r.error) || "the extension could not read the session — reload it in chrome://extensions");
+    if (!r.cookies) throw new Error("not signed in to CardUploader — sign in, then try again");
+    return r.cookies;
   }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -152,13 +143,14 @@
   };
 
   // For CardCropper's "CardUploader jobs" window: it lists and fetches jobs
-  // read-only with this session's token. The token lasts about an hour and is
-  // never stored by CardCropper, so copy a fresh one each session.
+  // read-only with this tab's session. CardCropper keeps it in memory only;
+  // signing out of CardUploader ends it.
   $("copyToken").onclick = async () => {
     try {
-      await navigator.clipboard.writeText(await token());
-      log("token copied — paste it into CardCropper (Tools → CardUploader jobs). " +
-          "It lasts about an hour.", "ok");
+      await api("GET", "/jobs/history");            // check the session works first
+      await navigator.clipboard.writeText(await sessionCookies());
+      log("session token copied — paste it into CardCropper (Tools → CardUploader jobs). " +
+          "It works until you sign out of CardUploader.", "ok");
     } catch (e) { log(e.message, "warn"); }
   };
 

@@ -193,7 +193,8 @@ the CSV would; when a job has none left, **Report again** reruns its report.
 **CardUploader jobs** (Tools menu, or the Batches page): in the extension,
 **Copy token for CardCropper**, paste it here, **List my jobs**, and **Fetch
 job data** saves `job-<batch>.json` beside the batch's manifest — read-only;
-the token lasts about an hour and is kept in memory only. **Collect from
+the token (your CardUploader sign-in session) works until you sign out and is
+kept in memory only. **Collect from
 Downloads** files the job data and history the extension saved, with no token.
 The saved history fills Batch & price's history box, so a batch code is never
 reused.

@@ -22,3 +22,21 @@ chrome.action.onClicked.addListener(async (tab) => {
     await chrome.tabs.sendMessage(tab.id, { type: "cc-toggle" });
   }
 });
+
+// The panel's "Copy token for CardCropper": CardUploader's session cookie is
+// httpOnly, so only the extension can read it. Answered as a Cookie header
+// value for the backend, or "" when signed out. Sent nowhere else.
+chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (!msg || msg.type !== "cc-session-cookies") return false;
+  if (!CARDUPLOADER.test((sender.tab && sender.tab.url) || sender.url || "")) {
+    reply({ error: "only a CardUploader tab can ask for its session" });
+    return false;
+  }
+  chrome.cookies.getAll({ url: "https://carduploader.com/backend/jobs/history" })
+    .then((cs) => {
+      const signedIn = cs.some((c) => c.name === "cu_signed_in");
+      reply({ cookies: signedIn ? cs.map((c) => `${c.name}=${c.value}`).join("; ") : "" });
+    })
+    .catch((e) => reply({ error: String(e && e.message || e) }));
+  return true;   // reply comes later
+});

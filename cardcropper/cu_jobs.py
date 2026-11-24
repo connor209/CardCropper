@@ -7,7 +7,8 @@ Two ways in, both through the user's own logged-in session:
 * **Fetch with a token.** The extension's "Copy token for CardCropper"
   button copies the tab's session token. With it the app lists the jobs
   (`GET /jobs/history`) and fetches one's data (`GET /jobs/{id}/data`). The
-  token lasts about an hour and is held in memory only, never written down.
+  token lasts until the user signs out of CardUploader and is held in
+  memory only, never written down.
 * **Collect from Downloads.** The extension's "Save job data" and "Save batch
   history" buttons write `job-<name>.json` and `carduploader-history.json` to
   Downloads; the app files each where it belongs.

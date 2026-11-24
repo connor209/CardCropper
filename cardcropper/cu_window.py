@@ -11,7 +11,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 
-from . import cu_jobs, ui
+from . import carduploader_api, cu_jobs, ui
 
 #: The token, for this run of the app only. Never written anywhere.
 _TOKEN = {"value": ""}
@@ -36,8 +36,9 @@ class JobsWindow(tk.Toplevel):
             .grid(row=0, column=0, columnspan=4, sticky="w")
         ttk.Label(f, style="Muted.TLabel", wraplength=780, justify="left", text=(
             "In your CardUploader tab, open the CardCropper panel and press Copy token for "
-            "CardCropper, then paste it here. It lasts about an hour and is kept only "
-            "while the app is open. Nothing is changed on CardUploader from here.")).grid(
+            "CardCropper, then paste it here. It works until you sign out of CardUploader "
+            "and is kept only while the app is open. Nothing is changed on CardUploader "
+            "from here.")).grid(
             row=1, column=0, columnspan=4, sticky="w", pady=(2, 8))
         ttk.Label(f, text="Token").grid(row=2, column=0, sticky="w")
         self.token_var = tk.StringVar(value=_TOKEN["value"])
@@ -119,9 +120,15 @@ class JobsWindow(tk.Toplevel):
                 kind, payload = self.events.get_nowait()
                 if kind == "err":
                     text = str(payload)
-                    if "401" in text or "403" in text:
-                        text = ("CardUploader did not accept the token — it has probably "
-                                "expired. Copy a fresh one from the extension.")
+                    if isinstance(payload, carduploader_api.NotSignedIn):
+                        old = "=" not in self._token()
+                        text = ("CardUploader did not accept the token. " + (
+                            "That is an old-style token, which CardUploader no longer "
+                            "takes: update the extension (reload it in chrome://extensions, "
+                            "then reload the CardUploader tab) and copy again."
+                            if old else
+                            "You may have signed out — reload the CardUploader tab, sign "
+                            "in if asked, and copy a fresh one."))
                     self.status.configure(text=text, foreground=ui.C["bad"])
                     continue
                 what, data = payload
