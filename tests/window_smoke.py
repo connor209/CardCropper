@@ -433,6 +433,27 @@ def market_checks(work):
           f"sold search URL wrong: {url}")
 
 
+def cu_jobs_list_checks(work):
+    """Jobs opened from outside the Batches folder still appear in the CardUploader page's list."""
+    import json as _json
+    from cardcropper import cu_jobs
+    root_dir = os.path.join(work, "cu-list", "batches")
+    inside = os.path.join(root_dir, "001")
+    outside = os.path.join(work, "cu-list", "Downloads")
+    os.makedirs(inside)
+    os.makedirs(outside)
+    a = os.path.join(inside, "job-IN.json")
+    b = os.path.join(outside, "job-OUT.json")          # opened by hand, outside the folder
+    c = os.path.join(outside, "job-NONAME.json")       # saved without a jobName
+    d = os.path.join(outside, "job-notajob.json")
+    for path, data in ((a, {"jobName": "IN", "jobId": "1"}), (b, {"jobName": "OUT", "jobId": "2"}),
+                       (c, {"jobId": "3", "results": {"cards": []}}), (d, {"hello": 1})):
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(data, fh)
+    got = sorted(n for n, _, _ in cu_jobs.local_jobs(root_dir, recent=[b, c, d, a]))
+    check(got == ["IN", "NONAME", "OUT"], f"job list wrong: {got}")
+
+
 def cu_tab_checks(work):
     """The CardUploader page lists saved jobs and shows grades and house prices beside each card."""
     import json as _json
@@ -454,7 +475,7 @@ def cu_tab_checks(work):
                    "NM", [])
     with open(os.path.join(folder, "priced-KU.json"), "w", encoding="utf-8") as fh:
         _json.dump([{"sku": "KU1", "suggested": 5.99}, {"sku": "KU2", "suggested": 9.99}], fh)
-    folders.save_settings(batches_root=root_dir)
+    folders.save_settings(batches_root=root_dir, recent={})   # earlier checks' jobs off the list
     check([n for n, _, _ in cu_jobs.local_jobs()] == ["KU"], "saved job not found")
 
     went = []
@@ -541,6 +562,24 @@ def cu_tab_checks(work):
             ch = _json.load(fh)
         conds = {c["sku"]: c["value"] for c in ch["changes"] if c["field"] == "condition"}
         check(conds.get("KU2") == "LP", f"the eye grade is not in the change file: {ch}")
+
+        # A job opened from outside the Batches folder joins the list and is
+        # selected, so it can be picked again later.
+        elsewhere = os.path.join(work, "cu-elsewhere")
+        os.makedirs(elsewhere)
+        other = os.path.join(elsewhere, "job-KX.json")
+        with open(other, "w", encoding="utf-8") as fh:
+            _json.dump({"jobName": "KX", "jobId": "j9", "results": {"cards": cards}}, fh)
+        tab.load(other)
+        deadline = _time.time() + 10
+        while _time.time() < deadline and "KX" not in [n for n, _, _ in tab.jobs]:
+            root.update()
+            _time.sleep(0.05)
+        root.update()
+        check("KX" in [n for n, _, _ in tab.jobs] and "KU" in [n for n, _, _ in tab.jobs],
+              f"a job opened from elsewhere is not in the list: {tab.jobs}")
+        check(tab.job_var.get().startswith("KX"),
+              f"the opened job is not the one selected: {tab.job_var.get()!r}")
     finally:
         root.destroy()
 
@@ -910,6 +949,7 @@ def main():
         pipeline_checks(work)
         daily_checks(work)
         market_checks(work)
+        cu_jobs_list_checks(work)
         watchdog_checks()
         backup_checks()
         window_checks()

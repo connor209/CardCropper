@@ -146,19 +146,50 @@ def collect_downloads(root=None, downloads=None, since_days=14):
     return moved
 
 
-def local_jobs(root=None):
-    """[(name, path, modified)] for every saved job under the batches folder, newest first."""
+def _job_label(path):
+    """A job file's name: its jobName, else job-<name>.json's <name>; '' if not a job."""
+    from . import pipeline
+    name = pipeline._job_name(path)                              # noqa: SLF001
+    n = os.path.basename(path)
+    if name or not (n.startswith("job-") and n.endswith(".json")):
+        return name
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(2_000_000)
+    except OSError:
+        return ""
+    return n[len("job-"):-len(".json")] if (b'"jobId"' in head or b'"results"' in head) else ""
+
+
+def local_jobs(root=None, recent=None):
+    """
+    [(name, path, modified)] for every saved job under the batches folder, and
+    every job opened from anywhere else lately (the recent list), newest first.
+    """
     from . import pipeline
     root = root or batches_root()
-    if not root or not os.path.isdir(root):
-        return []
-    out = []
-    for dirpath, names in pipeline._walk(root):                  # noqa: SLF001
-        for n in names:
-            if n.endswith(".json") and not n.startswith(("manifest-", "priced-", "changes-")):
-                p = os.path.join(dirpath, n)
-                name = pipeline._job_name(p)                     # noqa: SLF001
-                if name:
-                    out.append((name, p, os.path.getmtime(p)))
+    out, seen = [], set()
+
+    def add(p):
+        k = os.path.normcase(os.path.abspath(p))
+        if k in seen:
+            return
+        seen.add(k)
+        name = _job_label(p)
+        if name:
+            try:
+                out.append((name, p, os.path.getmtime(p)))
+            except OSError:
+                pass
+    if root and os.path.isdir(root):
+        for dirpath, names in pipeline._walk(root):              # noqa: SLF001
+            for n in names:
+                if n.endswith(".json") and not n.startswith(("manifest-", "priced-",
+                                                              "changes-")):
+                    add(os.path.join(dirpath, n))
+    for p in (folders.recent("variants") if recent is None else recent):
+        if p.endswith(".json"):
+            add(p)
     out.sort(key=lambda t: -t[2])
     return out
+

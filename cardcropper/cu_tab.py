@@ -68,8 +68,9 @@ class CardUploaderTab(ttk.Frame):
         self.job_box = ttk.Combobox(bar, textvariable=self.job_var, state="readonly")
         self.job_box.grid(row=0, column=1, sticky="ew")
         self.job_box.bind("<<ComboboxSelected>>", lambda _e: self._picked_job())
-        ui.tip(self.job_box, "Every CardUploader job saved under the Batches folder, newest "
-                             "first. Fetch more with CardUploader jobs….")
+        ui.tip(self.job_box, "Every CardUploader job saved under the Batches folder, and "
+                             "any job you opened from elsewhere, newest first. Fetch more "
+                             "with CardUploader jobs….")
         self.grade_btn = ttk.Button(bar, text="Grade by eye…", style="Accent.TButton",
                                     command=lambda: self.grade_by_eye())
         self.grade_btn.grid(row=0, column=5, padx=(6, 0))
@@ -196,7 +197,8 @@ class CardUploaderTab(ttk.Frame):
                 pane.sashpos(0, pane.winfo_width() - 350)
         pane.bind("<Configure>", place, add="+")
 
-        self.bind("<Map>", lambda _e: self.refresh_jobs() if not self.jobs else None, add="+")
+        self.bind("<Map>", lambda e: self.refresh_jobs() if e.widget is self else None,
+                  add="+")
         self.after(150, self._poll)
 
     # ------------------------------------------------------------ jobs
@@ -225,6 +227,9 @@ class CardUploaderTab(ttk.Frame):
     def load(self, path):
         folders.remember("variants", path)
         self.job_path = path
+        if not any(os.path.normcase(p) == os.path.normcase(os.path.abspath(path))
+                   for _, p, _ in self.jobs):
+            self.refresh_jobs()                 # opened from elsewhere: list it too
 
         def run():
             try:
@@ -269,7 +274,11 @@ class CardUploaderTab(ttk.Frame):
                     self.jobs = payload
                     self.job_box.configure(values=[
                         f"{n}   ·   {os.path.basename(os.path.dirname(p))}" for n, p, _ in payload])
-                    if payload and not self.job:
+                    here = [i for i, (_, p, _) in enumerate(payload) if self.job_path and
+                            os.path.normcase(p) == os.path.normcase(os.path.abspath(self.job_path))]
+                    if here:
+                        self.job_box.current(here[0])
+                    if payload and not self.job and not self.job_path:
                         self.job_box.current(0)
                         self.load(payload[0][1])
                     elif not payload:
