@@ -16,7 +16,14 @@
  */
 (function () {
   "use strict";
-  if (window.__ccPanel) return;
+  // After the extension is reloaded, the panel from the old copy stays on the
+  // page, still running the old code. If a panel is here but its extension
+  // copy is gone (or it predates this check), remove it and start fresh.
+  if (window.__ccPanel) {
+    if (window.__ccAlive && window.__ccAlive()) return;
+    window.__ccPanel.remove();
+  }
+  const VERSION = chrome.runtime.getManifest().version;
   const P = self.CCPush;
   const BASE = "https://carduploader.com/backend";
   const PER_REQUEST = 3;          // cards per POST
@@ -142,7 +149,7 @@
   </style>
   <div class="p">
     <button class="x" id="close">×</button>
-    <h2>CardCropper</h2>
+    <h2>CardCropper <span class="muted" style="font-weight:normal;font-size:12px">v${VERSION}</span></h2>
     <label class="muted">Batch (job) id</label>
     <input type="text" id="job" placeholder="job uuid">
     <div>
@@ -157,6 +164,7 @@
   </div>`;
   document.documentElement.appendChild(host);
   window.__ccPanel = host;
+  window.__ccAlive = () => { try { return !!chrome.runtime.id; } catch { return false; } };
   const $ = (id) => shadow.getElementById(id);
   const log = (msg, cls) => {
     const line = document.createElement("div");
@@ -167,10 +175,11 @@
   $("job").value = jobIdFromPage();
   $("close").onclick = () => { host.style.display = "none"; };
 
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (msg && msg.type === "cc-toggle") {
       host.style.display = host.style.display === "none" ? "block" : "none";
       if (!$("job").value) $("job").value = jobIdFromPage();
+      reply({ ok: true });
     }
   });
 

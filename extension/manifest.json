@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CardCropper for CardUploader",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Apply CardCropper change files (price, condition, variant) to your own CardUploader batches, after a diff and a click.",
   "action": {
     "default_title": "CardCropper"
