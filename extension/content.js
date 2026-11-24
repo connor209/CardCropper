@@ -17,7 +17,14 @@
  */
 (function () {
   "use strict";
-  if (window.__ccPanel) return;
+  // After the extension is reloaded, the panel from the old copy stays on the
+  // page, still running the old code. If a panel is here but its extension
+  // copy is gone (or it predates this check), remove it and start fresh.
+  if (window.__ccPanel) {
+    if (window.__ccAlive && window.__ccAlive()) return;
+    window.__ccPanel.remove();
+  }
+  const VERSION = chrome.runtime.getManifest().version;
   const P = self.CCPush;
   const BASE = "https://carduploader.com/backend";
   const PER_REQUEST = 3;          // cards per POST
@@ -26,36 +33,32 @@
 
   // ------------------------------------------------------------ auth + API
 
-  // CardUploader signs the tab in with an httpOnly session cookie (set by
-  // POST /backend/session) and expects an "x-cu-request: 1" header on every
-  // backend call — the Firebase bearer token is no longer accepted (changed
-  // after 21 Nov 2026). Same-origin fetches send the cookie by themselves.
-  const CU_HEADER = "x-cu-request";
-
-  async function api(method, path, body) {
-    const headers = { [CU_HEADER]: "1", "Content-Type": "application/json",
-                      Accept: "application/json" };
-    if (method !== "GET" && method !== "HEAD") headers["Idempotency-Key"] = crypto.randomUUID();
-    const res = await fetch(BASE + path, {
-      method, headers, credentials: "same-origin", cache: "no-store",
-      body: body ? JSON.stringify(body) : undefined
-    });
-    const text = await res.text();
-    let data;
-    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
-    if (res.status === 401) throw new Error(`${method} ${path}: signed out of CardUploader — reload the page and sign in again`);
-    if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status} ${text.slice(0, 200)}`);
-    if (data && data.success === false) throw new Error(`${method} ${path}: ${JSON.stringify(data).slice(0, 200)}`);
-    return data;
-  }
-
-  // The session cookie is httpOnly, so the page cannot read it; the
-  // extension's background worker can (cookies permission).
+  // CardUploader's session cookie is httpOnly, so the page cannot read it;
+  // the extension's background worker can (cookies permission). The desktop
+  // app needs it: the backend no longer accepts the Firebase token.
   async function sessionCookies() {
     const r = await chrome.runtime.sendMessage({ type: "cc-session-cookies" });
     if (!r || r.error) throw new Error((r && r.error) || "the extension could not read the session — reload it in chrome://extensions");
     if (!r.cookies) throw new Error("not signed in to CardUploader — sign in, then try again");
     return r.cookies;
+  }
+
+  async function api(method, path, body) {
+    // Since late Nov 2026 the site signs in with its own session cookie and
+    // sends X-Cu-Request: 1 on every backend call; a call without that header
+    // is refused with 403 BAD_REQUEST_ORIGIN. Make the call the way the page does.
+    const res = await fetch(BASE + path, {
+      method,
+      credentials: "include",
+      headers: { "X-Cu-Request": "1", "Content-Type": "application/json", Accept: "application/json" },
+      body: body ? JSON.stringify(body) : undefined
+    });
+    const text = await res.text();
+    let data;
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+    if (!res.ok) throw new Error(`${method} ${path}: HTTP ${res.status} ${text.slice(0, 200)}`);
+    if (data && data.success === false) throw new Error(`${method} ${path}: ${JSON.stringify(data).slice(0, 200)}`);
+    return data;
   }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -99,7 +102,7 @@
   </style>
   <div class="p">
     <button class="x" id="close">×</button>
-    <h2>CardCropper</h2>
+    <h2>CardCropper <span class="muted" style="font-weight:normal;font-size:12px">v${VERSION}</span></h2>
     <label class="muted">Batch (job) id</label>
     <input type="text" id="job" placeholder="job uuid">
     <div>
@@ -114,6 +117,7 @@
   </div>`;
   document.documentElement.appendChild(host);
   window.__ccPanel = host;
+  window.__ccAlive = () => { try { return !!chrome.runtime.id; } catch { return false; } };
   const $ = (id) => shadow.getElementById(id);
   const log = (msg, cls) => {
     const line = document.createElement("div");
@@ -124,10 +128,11 @@
   $("job").value = jobIdFromPage();
   $("close").onclick = () => { host.style.display = "none"; };
 
-  chrome.runtime.onMessage.addListener((msg) => {
+  chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (msg && msg.type === "cc-toggle") {
       host.style.display = host.style.display === "none" ? "block" : "none";
       if (!$("job").value) $("job").value = jobIdFromPage();
+      reply({ ok: true });
     }
   });
 
