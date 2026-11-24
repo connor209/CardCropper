@@ -119,7 +119,7 @@ class JobsWindow(tk.Toplevel):
                 kind, payload = self.events.get_nowait()
                 if kind == "err":
                     text = str(payload)
-                    if "401" in text or "403" in text:
+                    if "HTTP 401" in text:
                         text = ("CardUploader did not accept the token — it has probably "
                                 "expired. Copy a fresh one from the extension.")
                     self.status.configure(text=text, foreground=ui.C["bad"])

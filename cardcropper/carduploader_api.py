@@ -18,6 +18,7 @@ save the job data / history JSON and load the files instead.
 
 import json
 import os
+import urllib.error
 import urllib.request
 
 BASE = "https://carduploader.com/backend"
@@ -30,8 +31,17 @@ def _get(path, token, timeout=60):
                            "save the JSON from the extension and load the file")
     req = urllib.request.Request(BASE + path, headers={
         "Authorization": f"Bearer {token}", "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")[:300]
+        try:
+            j = json.loads(body)
+            body = f"{j.get('error') or j.get('message') or body} ({j.get('code', '')})".replace(" ()", "")
+        except ValueError:
+            pass
+        raise RuntimeError(f"HTTP {e.code} from CardUploader: {body}") from None
 
 
 def job_data(job_id, token=None):
