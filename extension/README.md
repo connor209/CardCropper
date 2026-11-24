@@ -25,7 +25,9 @@ CardUploader page, exactly as the batch page would make it.
 - **Copy token for CardCropper** copies this tab's session token, for
   CardCropper's **CardUploader jobs** window (Tools menu), which lists your jobs
   and fetches a job's data straight into its batch folder — read-only. The
-  token lasts about an hour; CardCropper keeps it in memory only. (Or leave the
+  token lasts about an hour; CardCropper keeps it in memory only. When the
+  token CardUploader has stored is out of date, the panel refreshes it first,
+  so there is no need to reload the page. (Or leave the
   saved JSON in Downloads: CardCropper's **Collect from Downloads** files it.)
 - **Apply a change file** (`changes-<batch>.json` from CardCropper):
   1. The job is read fresh, and each change is checked against it. A change

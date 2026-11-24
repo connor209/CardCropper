@@ -25,7 +25,14 @@
 
   // ------------------------------------------------------------ auth + API
 
-  function token() {
+  // Firebase keeps the signed-in user in IndexedDB, but only refreshes the
+  // access token there when CardUploader's own code asks for one, so the stored
+  // copy is often expired even on a freshly loaded page. When it is, refresh it
+  // here with the stored refresh token (the same call the Firebase SDK makes)
+  // and keep the new one in memory until it nears expiry.
+  let cached = null; // { token, exp }
+
+  function storedUser() {
     return new Promise((resolve, reject) => {
       const open = indexedDB.open("firebaseLocalStorageDb");
       open.onerror = () => reject(new Error("cannot open firebaseLocalStorageDb — are you logged in?"));
@@ -37,13 +44,8 @@
         req.onerror = () => reject(req.error);
         req.onsuccess = () => {
           for (const row of req.result || []) {
-            const t = row && row.value && row.value.stsTokenManager;
-            if (t && t.accessToken) {
-              if (t.expirationTime && t.expirationTime < Date.now() + 60000) {
-                return reject(new Error("the session token has expired — reload the page and try again"));
-              }
-              return resolve(t.accessToken);
-            }
+            const v = row && row.value;
+            if (v && v.stsTokenManager && v.stsTokenManager.accessToken) return resolve(v);
           }
           reject(new Error("no access token found — log in to CardUploader"));
         };
@@ -51,14 +53,46 @@
     });
   }
 
+  async function refresh(user) {
+    const rt = user.stsTokenManager.refreshToken;
+    if (!rt || !user.apiKey) {
+      throw new Error("the session token has expired and cannot be refreshed — log out and back in to CardUploader");
+    }
+    const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(user.apiKey)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: rt }).toString()
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.id_token) {
+      const why = (data.error && data.error.message) || `HTTP ${res.status}`;
+      throw new Error(`could not refresh the session token (${why}) — log out and back in to CardUploader`);
+    }
+    return { token: data.id_token, exp: Date.now() + Number(data.expires_in || 3600) * 1000 };
+  }
+
+  async function token(force) {
+    const soon = Date.now() + 60000;
+    if (!force && cached && cached.exp > soon) return cached.token;
+    const user = await storedUser();
+    const t = user.stsTokenManager;
+    if (!force && t.expirationTime && t.expirationTime > soon) {
+      cached = { token: t.accessToken, exp: t.expirationTime };
+    } else {
+      cached = await refresh(user);
+    }
+    return cached.token;
+  }
+
   async function api(method, path, body) {
-    const t = await token();              // fresh every call: tokens last ~1 hour
-    const res = await fetch(BASE + path, {
+    const call = async (force) => fetch(BASE + path, {
       method,
-      headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json",
+      headers: { Authorization: `Bearer ${await token(force)}`, "Content-Type": "application/json",
                  Accept: "application/json" },
       body: body ? JSON.stringify(body) : undefined
     });
+    let res = await call(false);
+    if (res.status === 401) res = await call(true); // token revoked early: refresh once and retry
     const text = await res.text();
     let data;
     try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
